@@ -1,11 +1,9 @@
 package com.gsr.engine;
 
 import com.gsr.data.Message;
-import com.gsr.data.Order;
 import com.gsr.feed.ObjectPool;
 
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -54,59 +52,15 @@ public class OrderBookDistributor {
 
     /**
      * Helper method to decide which queue to send a particular request to.
+     *
      * @param message
      */
     private void processMessage(Message message) {
 
         switch (message.getType()) {
 
-            case NewMarketOrder:
+            case AddOrUpdatePriceLevel:
                 switch (message.getSide()) {
-                    case Bid:
-                        switch (message.getPair()) {
-                            case ETHUSD:
-                                ethUsdOfferBookQueue.add(message);
-                                return;
-                            case BTCUSD:
-                                btcUsdOfferBookQueue.add(message);
-                                return;
-                            case SOLUSD:
-                                solUsdOfferBookQueue.add(message);
-                        }
-
-                    case Offer:
-                        switch (message.getPair()) {
-                            case ETHUSD:
-                                ethUsdBidBookQueue.add(message);
-                                return;
-                            case BTCUSD:
-                                btcUsdBidBookQueue.add(message);
-                                return;
-
-                            case SOLUSD:
-                                solUsdBidBookQueue.add(message);
-                        }
-
-                    default:
-                        System.out.println("Unexpected Message Type which is not handled: " + message.getType());
-                        messagePool.returnObject(message);
-                        return;
-                }
-
-            case NewLimitOrder:
-                switch (message.getSide()) {
-                    case Bid:
-                        switch (message.getPair()) {
-                            case ETHUSD:
-                                ethUsdBidBookQueue.add(message);
-                                return;
-                            case BTCUSD:
-                                btcUsdBidBookQueue.add(message);
-                                return;
-                            case SOLUSD:
-                                solUsdBidBookQueue.add(message);
-                        }
-
                     case Offer:
                         switch (message.getPair()) {
                             case ETHUSD:
@@ -119,21 +73,32 @@ public class OrderBookDistributor {
                                 solUsdOfferBookQueue.add(message);
                         }
 
+                        break;
+                    case Bid:
+                        switch (message.getPair()) {
+                            case ETHUSD:
+                                ethUsdBidBookQueue.add(message);
+                                return;
+                            case BTCUSD:
+                                btcUsdBidBookQueue.add(message);
+                                return;
+                            case SOLUSD:
+                                solUsdBidBookQueue.add(message);
+                        }
+                        break;
                     default:
-                        System.out.println("Unexpected Message Type which is not handled: " + message.getType());
+                        System.out.println("Unexpected Message Type which is not handled: " + message.getSide());
                         messagePool.returnObject(message);
                         return;
                 }
 
-            case CancelOrder:
-            case CancelAllOrders:
+            case RemovePriceLevel:
                 //To avoid having to synchronize between threads. Send the same to all. Let them do their stuff.
                 sendClonedMessage(btcUsdBidBookQueue, message);
                 sendClonedMessage(btcUsdOfferBookQueue, message);
                 sendClonedMessage(ethUsdBidBookQueue, message);
                 sendClonedMessage(ethUsdOfferBookQueue, message);
                 messagePool.returnObject(message);
-                return;
         }
     }
 

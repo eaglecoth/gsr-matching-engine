@@ -11,10 +11,7 @@ public class Message {
     private volatile Side side;
     private volatile long quantity;
     private volatile long price;
-    private volatile long orderId;
-    private volatile long clientId;
-    private volatile long clientOrderId;
-
+    private long time;
 
     public MessageType getType() {
         return type;
@@ -48,23 +45,6 @@ public class Message {
         this.price = price;
     }
 
-    public long getOrderId() {
-        return orderId;
-    }
-
-    public void setOrderId(long orderId) {
-        this.orderId = orderId;
-    }
-
-
-    public long getClientId() {
-        return clientId;
-    }
-
-    public void setClientId(long clientId) {
-        this.clientId = clientId;
-    }
-
     public Side getSide() {
         return side;
     }
@@ -73,23 +53,12 @@ public class Message {
         this.side = side;
     }
 
-    public void setClientOrderId(long clientOrderId) {
-        this.clientOrderId = clientOrderId;
-    }
-
-    public long getClientOrderId() {
-        return clientOrderId;
-    }
-
     public void populateFields(Message message){
         this.type = message.getType();
         this.pair = message.getPair();
         this.side = message.getSide();
         this.quantity = message.getQuantity();
         this.price = message.getPrice();
-        this.orderId = message.getOrderId();
-        this.clientId = message.getClientId();
-        this.clientOrderId = message.getClientOrderId();
     }
 
     @Override
@@ -100,9 +69,14 @@ public class Message {
                 ", side=" + side +
                 ", quantity=" + quantity +
                 ", price=" + price +
-                ", orderId=" + orderId +
-                ", clientId=" + clientId +
-                ", clientOrderId=" + clientOrderId +
                 '}';
+    }
+
+    public void setTime(long time) {
+        this.time = time;
+    }
+
+    public long getTime() {
+        return time;
     }
 }

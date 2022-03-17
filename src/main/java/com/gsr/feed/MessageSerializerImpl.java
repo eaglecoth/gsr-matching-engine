@@ -18,20 +18,21 @@ public class MessageSerializerImpl implements MessageSerializer {
     private final ConcurrentLinkedQueue<Message> engineMessageQueue;
     private final ObjectPool<Message> messageObjectPool;
     private final String stringDelimiter;
+    private final String valueDelimiter;
     private long offerRetryCount;
     private long sleepTimeMillis;
 
-    public MessageSerializerImpl(ConcurrentLinkedQueue<Message> messageQueue, ObjectPool objectPool, long retryCount, long waitTimeMillis, String delimiter) {
+    public MessageSerializerImpl(ConcurrentLinkedQueue<Message> messageQueue, ObjectPool objectPool, long retryCount, long waitTimeMillis, String delimiter, String keyValueDelimiter) {
 
         engineMessageQueue = messageQueue;
         messageObjectPool = objectPool;
         offerRetryCount = retryCount;
         sleepTimeMillis = waitTimeMillis;
         stringDelimiter = delimiter;
+        valueDelimiter = keyValueDelimiter;
     }
 
     /**
-     *
      * @param messageString instruction to send to matching engine
      * @return true if message was sucessfully submitted, else false
      * @throws InterruptedException thrown if thread is interrupted while sleeping in hope of engine to recover
@@ -39,14 +40,15 @@ public class MessageSerializerImpl implements MessageSerializer {
     public boolean onMessage(String messageString) {
 
         Message message = deserialize(messageString);
-        if(message == null){
+        System.out.println("Parsed message: " + message);
+        if (message == null) {
             return false;
         }
 
-        if(!engineMessageQueue.offer(message)) {
+        if (!engineMessageQueue.offer(message)) {
             long currentRetryCount = offerRetryCount;
 
-            while(!engineMessageQueue.offer(message) && currentRetryCount > 0){
+            while (!engineMessageQueue.offer(message) && currentRetryCount > 0) {
                 System.out.println("ERROR: Queue is full.  What do I do now? Just wait?");
                 try {
                     Thread.sleep(sleepTimeMillis);
@@ -54,7 +56,7 @@ public class MessageSerializerImpl implements MessageSerializer {
                     e.printStackTrace();
                     return false;
                 }
-                currentRetryCount -=1;
+                currentRetryCount -= 1;
             }
         }
 
@@ -62,114 +64,63 @@ public class MessageSerializerImpl implements MessageSerializer {
     }
 
 
-    private Message deserialize(String msgToDeSerialize){
+    private Message deserialize(String msgToDeSerialize) {
 
         String[] messageString = msgToDeSerialize.split(stringDelimiter);
         Message message = messageObjectPool.acquireObject();
 
-        if(messageString[0] == null){
-            return null;
+        int ptr = 0;
+
+        while (ptr < messageString.length) {
+
+            switch (messageString[ptr].charAt(0)) {
+                case 't':
+                    message.setTime(Long.parseLong(messageString[ptr].split(valueDelimiter)[1]));
+                    break;
+                case 'i':
+                    message.setPair(CcyPair.valueOf(messageString[ptr].split(valueDelimiter)[1]));
+                    break;
+                case 'p':
+                    message.setPrice(parsePrice(messageString[ptr].split(valueDelimiter)[1]));
+                    break;
+                case 'q':
+                    String quantity = messageString[ptr].split(valueDelimiter)[1];
+                    if ("0".equals(quantity) || "0.0".equals(quantity) || "0.00".equals(quantity)) {
+                        message.setType(MessageType.RemovePriceLevel);
+                    } else {
+                        message.setType(MessageType.AddOrUpdatePriceLevel);
+                        message.setQuantity(Long.parseLong(messageString[ptr].split(valueDelimiter)[1]));
+                    }
+                    break;
+                case 's':
+                    message.setSide(messageString[ptr].split(valueDelimiter)[1].equals("b") ? Side.Bid : Side.Offer);
+                    break;
+
+                default:
+                    System.out.println("I don't understand this field " + messageString[ptr].charAt(0) + ". I will ignore it");
+            }
+            ptr += 1;
         }
 
-        switch(messageString[0]){
-
-            case NEW_MARKET_ORDER:
-                message.setType(MessageType.NewMarketOrder);
-                message.setClientId(Long.valueOf(messageString[1]));
-                message.setClientOrderId(Long.valueOf(messageString[2]));
-                CcyPair pair = parseCcyPair(messageString[3]);
-                if(pair == null){
-                    messageObjectPool.returnObject(message);
-                    return null;
-                }
-                message.setPair(pair);
-
-                Side side = parseSide(messageString[4]);
-                if(side == null){
-                    messageObjectPool.returnObject(message);
-                    return null;
-                }
-                message.setSide(side);
-                message.setQuantity(Long.valueOf(messageString[5]));
-                return message;
-
-            case NEW_LIMIT_ORDER:
-                message.setType(MessageType.NewLimitOrder);
-                message.setClientId(Long.valueOf(messageString[1]));
-                message.setClientOrderId(Long.valueOf(messageString[2]));
-                pair = parseCcyPair(messageString[3]);
-                if(pair == null){
-                    messageObjectPool.returnObject(message);
-                    return null;
-                }
-                message.setPair(pair);
-
-                side = parseSide(messageString[4]);
-                if(side == null){
-                    messageObjectPool.returnObject(message);
-                    return null;
-                }
-                message.setSide(side);
-                message.setQuantity(Long.valueOf(messageString[5]));
-                message.setPrice(Long.valueOf(messageString[6]));
-                return message;
-
-            case CANCEL_ORDER:
-                message.setType(MessageType.CancelOrder);
-                message.setClientId(Long.valueOf(messageString[1]));
-                message.setOrderId(Long.valueOf(messageString[2]));
-                return message;
-
-            case CANCEL_ALL:
-                message.setType(MessageType.CancelAllOrders);
-                message.setClientId(Long.valueOf(messageString[1]));
-                return message;
-
-            default:
-                System.out.println("What happened here?  I don't handle messages of type " + messageString[0]);
-                messageObjectPool.returnObject(message);
-        }
-
-        return null;
+        return message;
     }
 
-    private Side parseSide(String sideString) {
+    /**
+     * We do all representation with 2 decimals.
+     * @param priceString string representation of price to parse
+     * @return long representing  the price * 100. I.e. last 2 digits are the decimal points -- padded if required.
+     */
+    private long parsePrice(String priceString) {
+        String[] split = priceString.split("\\.");
 
-        if(sideString == null){
-            return null;
+        if(split.length == 1){
+            return Long.parseLong(priceString) * 100;
+        }else{
+            long result = Long.parseLong(split[0] + split[1]);
+            if(split[1].length() == 1){
+                result  = result * 10;
+            }
+            return result;
         }
-        switch (sideString){
-
-            case BID:
-                return Side.Bid;
-
-            case OFFER:
-                return Side.Offer;
-
-            default:
-                System.out.println("I can't interpret side " + sideString);
-                return null;
-        }
-
-    }
-
-    private CcyPair parseCcyPair(String ccyString){
-
-        if(ccyString == null){
-            return null;
-        }
-        switch (ccyString){
-
-            case BTCUSD:
-                return CcyPair.BTCUSD;
-
-            case ETHUSD:
-                return CcyPair.ETHUSD;
-
-            default:
-                System.out.println("I don't offer currency pair " + ccyString);
-                return null;
-        }
-
     }
 }

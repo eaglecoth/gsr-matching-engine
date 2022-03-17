@@ -4,42 +4,41 @@ import com.gsr.data.*;
 import com.gsr.feed.ObjectPool;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class OfferOrderBookProcessor extends OrderBookProcessor{
 
-    public OfferOrderBookProcessor(CcyPair pair, ObjectPool<Order> orderObjectPool, ObjectPool<Execution> executionObjectPool, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue, ConcurrentLinkedQueue<Execution> executionPublishQueue, AtomicLong orderCounter) {
-        super(pair, orderObjectPool, executionObjectPool, messageObjectPool, distributorInboundQueue, executionPublishQueue, orderCounter);
+    public OfferOrderBookProcessor(CcyPair pair, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue) {
+        super(pair, messageObjectPool, distributorInboundQueue);
     }
 
     /**
-     * Limits are ordered in a sorted double linked list. When a new limit arrives, we traverse the list and insert
+     * Prices are ordered in a sorted double linked list. When a new limit arrives, we traverse the list and insert
      * at the appropriate spot, starting at the top of book as we expect the action to mostly occur there.
-     * Hopefully this won't happen to often.
-     * @param newLimitLevel new price level to be added
-     * @param currentLimitLevel limit price level to compare to, normally start at top of book
+     *
+     * @param newPriceLevel new price level to be added
+     * @param currentPriceLevel price level to compare to, normally start at top of book
      */
-    protected void insertInChain(LimitLevel newLimitLevel, LimitLevel currentLimitLevel) {
-        if (newLimitLevel.getPrice() < currentLimitLevel.getPrice()) {
-            LimitLevel lowerBelowCurrent = currentLimitLevel.getNextLower();
+    protected void insertInChain(PriceLevel newPriceLevel, PriceLevel currentPriceLevel) {
+        if (newPriceLevel.getPrice() < currentPriceLevel.getPrice()) {
+            PriceLevel lowerBelowCurrent = currentPriceLevel.getNextLower();
             if (lowerBelowCurrent == null) {
-                currentLimitLevel.setNextLower(newLimitLevel);
-                newLimitLevel.setNextHigher(currentLimitLevel);
-                topOfBook = newLimitLevel;
+                currentPriceLevel.setNextLower(newPriceLevel);
+                newPriceLevel.setNextHigher(currentPriceLevel);
+                topOfBook = newPriceLevel;
             }else{
-                lowerBelowCurrent.setNextHigher(currentLimitLevel);
-                newLimitLevel.setNextLower(lowerBelowCurrent);
-                newLimitLevel.setNextHigher(currentLimitLevel);
-                currentLimitLevel.setNextLower(newLimitLevel);
+                lowerBelowCurrent.setNextHigher(currentPriceLevel);
+                newPriceLevel.setNextLower(lowerBelowCurrent);
+                newPriceLevel.setNextHigher(currentPriceLevel);
+                currentPriceLevel.setNextLower(newPriceLevel);
             }
             return;
 
-        } else if (currentLimitLevel.getNextHigher() == null) {
-            currentLimitLevel.setNextHigher(newLimitLevel);
-            newLimitLevel.setNextLower(currentLimitLevel);
+        } else if (currentPriceLevel.getNextHigher() == null) {
+            currentPriceLevel.setNextHigher(newPriceLevel);
+            newPriceLevel.setNextLower(currentPriceLevel);
             return;
         }
-        insertInChain(newLimitLevel, currentLimitLevel.getNextHigher());
+        insertInChain(newPriceLevel, currentPriceLevel.getNextHigher());
     }
 
     @Override
@@ -69,7 +68,21 @@ public class OfferOrderBookProcessor extends OrderBookProcessor{
     }
 
     @Override
-    protected LimitLevel getNextLevelLimit(LimitLevel limitLevelToExecute) {
-        return limitLevelToExecute.getNextHigher();
+    protected PriceLevel getNextLevelLimit(PriceLevel priceLevelToExecute) {
+        return priceLevelToExecute.getNextHigher();
+    }
+
+    @Override
+    public double calculateAveragePrice(int levels) {
+        int ptr = 0;
+        PriceLevel currLevel = topOfBook;
+        long totalPrice= 0;
+        while(ptr < levels && currLevel != null){
+            totalPrice += currLevel.getPrice();
+            ptr +=1;
+            currLevel = currLevel.getNextHigher();
+        }
+
+        return (double) totalPrice / (levels * 100);
     }
 }
