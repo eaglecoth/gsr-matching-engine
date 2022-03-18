@@ -1,10 +1,12 @@
 package com.gsr.engine;
 
+import com.gsr.analytics.Request;
 import com.gsr.data.*;
 import com.gsr.feed.ObjectPool;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The OrderBookProcessor is an instance to represent and manage one side of a book for a particular currency pair
@@ -13,23 +15,31 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public abstract class OrderBookProcessor {
     private Thread engineThread;
     private final CcyPair pair;
-    protected ConcurrentLinkedQueue<Message> distributorInboundQueue;
+
+    private final int MAX_PENDING_MD_UPDATES = 10;
+    private final int MAX_PENDING_ANALYTICS_REQ = 100;
+    private final int MAX_WAIT_NANOS = 20000;
+
     protected volatile boolean runningFlag;
     protected final TreeMap<Long, PriceLevel> orderBook = new TreeMap<>();
     protected final ObjectPool<Message> messageObjectPool;
-    private final ObjectPool<PriceLevel> limitObjectPool;
-    protected volatile PriceLevel topOfBook;
+    private final ObjectPool<PriceLevel> priceLevelObjectPool;
+    protected AtomicReference<PriceLevel> topOfBook;
 
+    private final Map<Integer, Long> quantityCalculations = new HashMap<>();
+    private final Map<Integer, Double> vwapCalculations = new HashMap<>();
+    private final Map<Integer, Double> priceCalculations = new HashMap<>();
 
     protected volatile OrderBookProcessor correspondingProcessor;
 
-    public OrderBookProcessor(CcyPair pair, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue) {
-        this.distributorInboundQueue = distributorInboundQueue;
+    public OrderBookProcessor(CcyPair pair, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue, ConcurrentLinkedQueue<Request> requestQueue, ConcurrentLinkedQueue<Request> responseQueue) {
+
         this.messageObjectPool = messageObjectPool;
         this.pair = pair;
-        this.limitObjectPool = new ObjectPool<>(PriceLevel::new);
+        this.priceLevelObjectPool = new ObjectPool<>(PriceLevel::new);
+        this.topOfBook = new AtomicReference<>(null);
 
-        configureOrderBookThread(distributorInboundQueue);
+        configureOrderBookThread(distributorInboundQueue, requestQueue, responseQueue);
     }
 
     /**
@@ -42,13 +52,15 @@ public abstract class OrderBookProcessor {
 
         switch (message.getType()) {
             case RemovePriceLevel:
-                orderBook.remove(message.getPrice());
+                PriceLevel levelToRemove = orderBook.remove(message.getPrice());
+                if (levelToRemove != null && levelToRemove.removePriceFromBook()) {
+                    topOfBook.set(null);
+                }
                 messageObjectPool.returnObject(message);
                 return;
 
             case AddOrUpdatePriceLevel:
-
-                if(!priceCrossingSpread(message.getPrice())){
+                if (!priceCrossingSpread(message.getPrice())) {
                     addOrUpdatePriceLevel(message);
                 }
                 messageObjectPool.returnObject(message);
@@ -59,6 +71,7 @@ public abstract class OrderBookProcessor {
     /**
      * Helper method to add or update quantity at a price, and if such price does not exist
      * then create it
+     *
      * @param message containing a quantity which is to be inserted into the book.
      */
     private void addOrUpdatePriceLevel(final Message message) {
@@ -66,9 +79,9 @@ public abstract class OrderBookProcessor {
         orderBook.compute(message.getPrice(), (priceLevel, limit) -> {
 
             //If this is the first order of this price create the new limit book
-            if(limit == null) {
+            if (limit == null) {
                 limit = addNewPriceLevelToBook(priceLevel, message.getQuantity());
-            }else{
+            } else {
                 limit.adjustQuantity(message.getQuantity());
             }
             return limit;
@@ -77,24 +90,21 @@ public abstract class OrderBookProcessor {
 
     /**
      * Helper method to aqcuire a new object form pool and insert in to chain of price levels
-     * @param priceLevel the price for which no current orders exist
-     * @return  the newly added price limit
+     *
+     * @param price the price for which no current orders exist
+     * @return the newly added price limit
      */
-    private PriceLevel addNewPriceLevelToBook(Long priceLevel, long quantity) {
-        PriceLevel limit = limitObjectPool.acquireObject();
-        limit.populate(priceLevel, quantity);
-        //Unless this is the first order entirely in this book, traverse the list and insert the new limit
-        //where it fits in.
-        if (topOfBook != null) {
-            insertInChain(limit, topOfBook);
-        } else {
-            topOfBook = limit;
-        }
-        return limit;
-    }
+    private PriceLevel addNewPriceLevelToBook(Long price, long quantity) {
+        PriceLevel priceLevel = priceLevelObjectPool.acquireObject();
+        priceLevel.populate(price, quantity);
 
-    public ConcurrentLinkedQueue<Message> getDistributorInboundQueue() {
-        return distributorInboundQueue;
+        //Unless this is the first price of this book traverse chain and insert.
+        //This is not thread safe but it needs not to be as only one thread ever will make modifications
+        //on the book.
+        if (!topOfBook.compareAndSet(null, priceLevel)) {
+            insertInChain(priceLevel, topOfBook.get());
+        }
+        return priceLevel;
     }
 
     public CcyPair getPair() {
@@ -106,28 +116,86 @@ public abstract class OrderBookProcessor {
     }
 
     public void shutdown() {
-        System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() +"] shutting down.");
+        System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() + "] shutting down.");
         runningFlag = false;
     }
 
     /**
-     * Helper method to launch the processor in its own thread.
-     * @param distributorInboundQueue Queue for which to poll for incoming orders / cancellations
+     * Helper method to configure the order book thread
+     *
+     * @param inboundMdQueue      Queue of inbound market data information
+     * @param inboundRequestQueue Queue of inbound analytics requests
+     * @param outboundQueue       Queue of outbound responses to analytics requests
      */
-    private void configureOrderBookThread(ConcurrentLinkedQueue<Message> distributorInboundQueue) {
+    private void configureOrderBookThread(final ConcurrentLinkedQueue<Message> inboundMdQueue, final ConcurrentLinkedQueue<Request> inboundRequestQueue, final ConcurrentLinkedQueue<Request> outboundQueue) {
         engineThread = new Thread(() -> {
-            System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() +"] started.");
+            System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() + "] started.");
+
+            long lastMdUpdate = System.nanoTime();
+            long lastService = System.nanoTime();
 
             while (runningFlag) {
-                Message message = distributorInboundQueue.poll();
-                if (message != null) {
-                    processMessage(message);
+
+                //How to load balance this ultimately comes down to performance considerations
+                //Here I've decided to process all pending requests as long as the other queue does not grow over some
+                //tunable limit and the data does not become antiquated. This allows to focus work on the most demanding
+                // task.
+
+                //With approach below -- Since analytics results can be cached, we can process huge amounts of them
+                //should the market tick slowly. Conversely
+
+                boolean hasUpdatedBook = false;
+
+                Message marketDataMessage = inboundMdQueue.poll();
+                while (marketDataMessage != null && inboundRequestQueue.size() < MAX_PENDING_ANALYTICS_REQ && hasTimeToExecute(lastService, inboundRequestQueue.isEmpty())) {
+                    processMessage(marketDataMessage);
+                    marketDataMessage = inboundMdQueue.poll();
+                    hasUpdatedBook = true;
+                    lastMdUpdate = System.nanoTime();
+
+                }
+
+                if (hasUpdatedBook) {
+                    //The cached analytics results are now no longer correct and must be removed
+                    clearCalculationResults();
+                }
+
+                Request request = inboundRequestQueue.poll();
+
+                while (request != null && inboundMdQueue.size() < MAX_PENDING_MD_UPDATES && hasTimeToExecute(lastMdUpdate, inboundMdQueue.isEmpty())) {
+                    switch (request.getType()) {
+
+                        case Vwap:
+                            request.populateResult(vwapCalculations.computeIfAbsent(request.getLevels(), this::calculateVwapOverLevels));
+                            break;
+
+                        case AveragePrice:
+                            request.populateResult(priceCalculations.computeIfAbsent(request.getLevels(), this::calculateAveragePrice));
+                            break;
+
+                        case AverageQuantity:
+                            request.populateResult(quantityCalculations.computeIfAbsent(request.getLevels(), this::calculateQtyOverLevels));
+                            break;
+                    }
+                    outboundQueue.add(request);
+                    request = inboundRequestQueue.poll();
+                    lastService = System.nanoTime();
                 }
             }
         });
     }
 
-    public void startOrderBook(){
+    private boolean hasTimeToExecute(long lastService, boolean empty) {
+        return empty || System.nanoTime() - lastService > MAX_WAIT_NANOS;
+    }
+
+    private void clearCalculationResults() {
+        priceCalculations.clear();
+        vwapCalculations.clear();
+        quantityCalculations.clear();
+    }
+
+    public void startOrderBook() {
         runningFlag = true;
         engineThread.start();
     }
@@ -136,11 +204,7 @@ public abstract class OrderBookProcessor {
 
     abstract void insertInChain(PriceLevel newPriceLevel, PriceLevel currentPriceLevel);
 
-    abstract PriceLevel getNextLevelLimit(PriceLevel priceLevelToExecute);
-
     protected abstract Side getSide();
-
-    protected abstract Side getOppositeSide();
 
     public abstract double calculateAveragePrice(int levels);
 

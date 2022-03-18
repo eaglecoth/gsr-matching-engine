@@ -1,5 +1,6 @@
 package com.gsr.engine;
 
+import com.gsr.analytics.Request;
 import com.gsr.data.*;
 import com.gsr.feed.ObjectPool;
 
@@ -7,8 +8,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class OfferOrderBookProcessor extends OrderBookProcessor{
 
-    public OfferOrderBookProcessor(CcyPair pair, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue) {
-        super(pair, messageObjectPool, distributorInboundQueue);
+    public OfferOrderBookProcessor(CcyPair pair, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue, ConcurrentLinkedQueue<Request> requestQueue, ConcurrentLinkedQueue<Request> responseQueue) {
+        super(pair,  messageObjectPool, distributorInboundQueue, requestQueue,responseQueue );
     }
 
     /**
@@ -24,7 +25,7 @@ public class OfferOrderBookProcessor extends OrderBookProcessor{
             if (lowerBelowCurrent == null) {
                 currentPriceLevel.setNextLower(newPriceLevel);
                 newPriceLevel.setNextHigher(currentPriceLevel);
-                topOfBook = newPriceLevel;
+                topOfBook.set(newPriceLevel);
             }else{
                 lowerBelowCurrent.setNextHigher(currentPriceLevel);
                 newPriceLevel.setNextLower(lowerBelowCurrent);
@@ -58,24 +59,14 @@ public class OfferOrderBookProcessor extends OrderBookProcessor{
     }
 
     @Override
-    protected Side getOppositeSide() {
-        return Side.Bid;
-    }
-
-    @Override
     protected long getTopOfBookPrice() {
-        return topOfBook == null ? Long.MAX_VALUE : topOfBook.getPrice();
-    }
-
-    @Override
-    protected PriceLevel getNextLevelLimit(PriceLevel priceLevelToExecute) {
-        return priceLevelToExecute.getNextHigher();
+        return topOfBook == null ? Long.MAX_VALUE : topOfBook.get().getPrice();
     }
 
     @Override
     public double calculateAveragePrice(int levels) {
         int ptr = 0;
-        PriceLevel currLevel = topOfBook;
+        PriceLevel currLevel = topOfBook.get();
         long totalPrice= 0;
         while(ptr < levels && currLevel != null){
             totalPrice += currLevel.getPrice();
@@ -84,5 +75,15 @@ public class OfferOrderBookProcessor extends OrderBookProcessor{
         }
 
         return (double) totalPrice / (levels * 100);
+    }
+
+    @Override
+    public long calculateQtyOverLevels(int levels) {
+        return 0;
+    }
+
+    @Override
+    public double calculateVwapOverLevels(int levels) {
+        return 0;
     }
 }

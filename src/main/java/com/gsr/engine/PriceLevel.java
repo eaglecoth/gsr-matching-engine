@@ -24,7 +24,7 @@ public class PriceLevel {
      * @param adjustment to make to price level
      */
     public void adjustQuantity(long adjustment){
-        quantity += adjustment;
+        quantity = adjustment;
     }
 
     public long getPrice() {
@@ -57,5 +57,26 @@ public class PriceLevel {
 
     public void setNextLower(PriceLevel nextLower) {
         this.nextLower = nextLower;
+    }
+
+    /**
+     * If the quantity of the price is 0, the level does no longer serve any purpose and should be removed
+     * from book
+     * @return true if this limit was the last in the book
+     */
+    public boolean removePriceFromBook(){
+        if(nextHigher != null && nextLower != null){
+            nextHigher.setNextLower(nextLower);
+            nextLower.setNextHigher(nextHigher);
+            return false;
+        }else if(nextHigher != null){
+            nextHigher.setNextLower(null);
+            return false;
+        }else if(nextLower != null){
+            nextLower.setNextHigher(null);
+            return false;
+        }else{
+            return true;
+        }
     }
 }

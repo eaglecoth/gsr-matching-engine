@@ -7,8 +7,6 @@ import com.gsr.data.Side;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-import static com.gsr.data.Constants.*;
-
 
 /**
  * Not sure if this was really necessary.  The engine needs some serializer mechanism. This one is stupid.

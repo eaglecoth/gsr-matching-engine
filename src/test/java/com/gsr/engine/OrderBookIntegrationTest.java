@@ -1,5 +1,6 @@
 package com.gsr.engine;
 
+import com.gsr.analytics.Request;
 import com.gsr.data.*;
 import com.gsr.feed.ObjectPool;
 import org.junit.After;
@@ -9,7 +10,6 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import static org.junit.Assert.*;
 
 public class OrderBookIntegrationTest {
 
@@ -32,13 +32,22 @@ public class OrderBookIntegrationTest {
             queues.add(new ConcurrentLinkedQueue<>());
         }
 
-        orderBookDistributor = new OrderBookDistributor(distributorInboundQueue, queues, messagePool);
-        btcOfferProcessor = new OfferOrderBookProcessor(CcyPair.BTCUSD, messagePool, queues.get(0));
-        btcBidProcessor = new BidOrderBookProcessor(CcyPair.BTCUSD, messagePool, queues.get(1));
-        ethOfferProcessor = new OfferOrderBookProcessor(CcyPair.ETHUSD, messagePool, queues.get(2));
-        ethBidProcessor = new BidOrderBookProcessor(CcyPair.ETHUSD, messagePool, queues.get(3));
-        solOfferProcessor = new OfferOrderBookProcessor(CcyPair.SOLUSD, messagePool, queues.get(4));
-        solBidProcessor = new BidOrderBookProcessor(CcyPair.SOLUSD, messagePool, queues.get(5));
+        List<ConcurrentLinkedQueue<Request>> requestQueues = new ArrayList<>(6);
+        for (int i = 0; i < 6; i++) {
+            queues.add(new ConcurrentLinkedQueue<>());
+        }
+
+        List<ConcurrentLinkedQueue<Request>> responseQueues = new ArrayList<>(6);
+        for (int i = 0; i < 6; i++) {
+            queues.add(new ConcurrentLinkedQueue<>());
+        }
+
+        btcOfferProcessor = new OfferOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(0), requestQueues.get(0), responseQueues.get(0)) ;
+        btcBidProcessor = new BidOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(1), requestQueues.get(1), responseQueues.get(1));
+        ethBidProcessor = new BidOrderBookProcessor(CcyPair.ETHUSD,   messagePool, queues.get(2), requestQueues.get(2), responseQueues.get(2));
+        ethOfferProcessor = new OfferOrderBookProcessor(CcyPair.ETHUSD,   messagePool, queues.get(3), requestQueues.get(3), responseQueues.get(3));
+        solBidProcessor = new BidOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(4), requestQueues.get(4), responseQueues.get(4) );
+        solOfferProcessor = new OfferOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(5), requestQueues.get(5), responseQueues.get(5));
 
         btcOfferProcessor.setCorrespondingBook(btcBidProcessor);
         btcBidProcessor.setCorrespondingBook(btcOfferProcessor);

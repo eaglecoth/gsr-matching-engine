@@ -1,18 +1,19 @@
 package com.gsr.engine;
 
+import com.gsr.analytics.Request;
 import com.gsr.data.*;
 import com.gsr.feed.ObjectPool;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicLong;
+
 
 /**
  * Implementation of the Bid side of an order book
  */
 public class BidOrderBookProcessor extends OrderBookProcessor{
 
-    public BidOrderBookProcessor(CcyPair pair, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue) {
-        super(pair,  messageObjectPool, distributorInboundQueue);
+    public BidOrderBookProcessor(CcyPair pair, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue, ConcurrentLinkedQueue<Request> requestQueue, ConcurrentLinkedQueue<Request> responseQueue) {
+        super(pair,  messageObjectPool, distributorInboundQueue, requestQueue,responseQueue );
     }
 
     @Override
@@ -26,14 +27,9 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
     }
 
     @Override
-    protected Side getOppositeSide() {
-        return Side.Offer;
-    }
-
-    @Override
     public double calculateAveragePrice(int levels) {
         int ptr = 0;
-        PriceLevel currLevel = topOfBook;
+        PriceLevel currLevel = topOfBook.get();
         long totalPrice= 0;
         while(ptr < levels && currLevel != null){
             totalPrice += currLevel.getPrice();
@@ -47,7 +43,7 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
     @Override
     public long calculateQtyOverLevels(int levels) {
         int ptr = 0;
-        PriceLevel currLevel = topOfBook;
+        PriceLevel currLevel = topOfBook.get();
         long totalQty= 0;
         while(ptr < levels && currLevel != null){
             totalQty += currLevel.getQuantity();
@@ -61,10 +57,10 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
     @Override
     public double calculateVwapOverLevels(int levels) {
         int ptr = 0;
-        PriceLevel currLevel = topOfBook;
+        PriceLevel currLevel = topOfBook.get();
         double totalPriceWeight= 0;
         while(ptr < levels && currLevel != null){
-            totalPriceWeight += (currLevel.getPrice() * currLevel.getQuantity();
+            totalPriceWeight += (currLevel.getPrice() * currLevel.getQuantity());
             ptr +=1;
             currLevel = currLevel.getNextLower();
         }
@@ -74,13 +70,9 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
 
     @Override
     protected long getTopOfBookPrice() {
-        return topOfBook == null ? 0 : topOfBook.getPrice();
+        return topOfBook == null ? 0 : topOfBook.get().getPrice();
     }
 
-    @Override
-    protected PriceLevel getNextLevelLimit(PriceLevel priceLevelToExecute) {
-        return priceLevelToExecute.getNextLower();
-    }
 
     /**
      * Limits are ordered in a sorted double linked list. When a new limit arrives, we traverse the list and insert
@@ -95,7 +87,7 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
                 //We're inserting a new best price
                 currentPriceLevel.setNextHigher(priceToInsert);
                 priceToInsert.setNextLower(currentPriceLevel);
-                topOfBook = priceToInsert;
+                topOfBook.set(priceToInsert);
             }else{
                 //We're inserting a new price somewhere in the middle of the book
                 limitAboveCurrent.setNextLower(priceToInsert);

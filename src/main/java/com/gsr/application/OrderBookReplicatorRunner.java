@@ -1,5 +1,6 @@
 package com.gsr.application;
 
+import com.gsr.analytics.Request;
 import com.gsr.data.CcyPair;
 
 import com.gsr.data.Message;
@@ -27,6 +28,16 @@ public class OrderBookReplicatorRunner {
             queues.add(new ConcurrentLinkedQueue<>());
         }
 
+        List<ConcurrentLinkedQueue<Request>> requestQueues = new ArrayList<>(6);
+        for (int i = 0; i < 6; i++) {
+            queues.add(new ConcurrentLinkedQueue<>());
+        }
+
+        List<ConcurrentLinkedQueue<Request>> responseQueues = new ArrayList<>(6);
+        for (int i = 0; i < 6; i++) {
+            queues.add(new ConcurrentLinkedQueue<>());
+        }
+
         ObjectPool<Message> messagePool = new ObjectPool<>(Message::new);
 
         ConcurrentLinkedQueue<Message> distributorInboundQueue = new ConcurrentLinkedQueue<>();
@@ -35,12 +46,12 @@ public class OrderBookReplicatorRunner {
         OrderBookDistributor orderBookDistributor = new OrderBookDistributor(distributorInboundQueue, queues, messagePool);
 
 
-        OrderBookProcessor btcOfferProcessor = new OfferOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(0)) ;
-        OrderBookProcessor btcBidProcessor = new BidOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(1));
-        OrderBookProcessor ethBidProcessor = new BidOrderBookProcessor(CcyPair.ETHUSD,   messagePool, queues.get(2));
-        OrderBookProcessor ethOfferProcessor = new OfferOrderBookProcessor(CcyPair.ETHUSD,   messagePool, queues.get(3));
-        OrderBookProcessor solBidProcessor = new BidOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(4) );
-        OrderBookProcessor solOfferProcessor = new OfferOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(5));
+        OrderBookProcessor btcOfferProcessor = new OfferOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(0), requestQueues.get(0), responseQueues.get(0)) ;
+        OrderBookProcessor btcBidProcessor = new BidOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(1), requestQueues.get(1), responseQueues.get(1));
+        OrderBookProcessor ethBidProcessor = new BidOrderBookProcessor(CcyPair.ETHUSD,   messagePool, queues.get(2), requestQueues.get(2), responseQueues.get(2));
+        OrderBookProcessor ethOfferProcessor = new OfferOrderBookProcessor(CcyPair.ETHUSD,   messagePool, queues.get(3), requestQueues.get(3), responseQueues.get(3));
+        OrderBookProcessor solBidProcessor = new BidOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(4), requestQueues.get(4), responseQueues.get(4) );
+        OrderBookProcessor solOfferProcessor = new OfferOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(5), requestQueues.get(5), responseQueues.get(5));
 
         btcOfferProcessor.setCorrespondingBook(btcBidProcessor);
         btcBidProcessor.setCorrespondingBook(btcOfferProcessor);
