@@ -18,7 +18,7 @@ public abstract class OrderBookProcessor {
 
     private final int MAX_PENDING_MD_UPDATES = 100;
     private final int MAX_PENDING_ANALYTICS_REQ = 100;
-    private final int MAX_WAIT_NANOS = 2000000000;
+    private final int MAX_WAIT_NANOS = 20000;
 
     protected volatile boolean runningFlag;
     protected final TreeMap<Long, PriceLevel> orderBook = new TreeMap<>();
@@ -42,6 +42,21 @@ public abstract class OrderBookProcessor {
         configureOrderBookThread(distributorInboundQueue, requestQueue, responseQueue);
     }
 
+    public void startOrderBook() {
+        runningFlag = true;
+        engineThread.start();
+    }
+
+    public void setCorrespondingBook(OrderBookProcessor offerProcessor) {
+        this.correspondingProcessor = offerProcessor;
+    }
+
+    public void shutdown() {
+        System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() + "] shutting down.");
+        runningFlag = false;
+    }
+
+
     /**
      * Main processing method.  Incoming messages are categorised by type and processed accordingly. All processing
      * within the book itself happens synchronously.
@@ -56,13 +71,13 @@ public abstract class OrderBookProcessor {
                 if (levelToRemove != null && levelToRemove.removePriceFromBook()) {
                     topOfBook.set(null);
                 }
-                System.out.println("Removed from book: [" + message.getPair() + "] side: [" + message.getSide() + "] price: [" + message.getPrice() +"]");
+                System.out.println("Removed from book: [" + message.getPair() + "] side: [" + message.getSide() + "] price: [" + message.getPrice() + "]");
                 messageObjectPool.returnObject(message);
                 return;
 
             case AddOrUpdatePriceLevel:
-                    addOrUpdatePriceLevel(message);
-                    System.out.println("Added to book: [" + message.getPair() + "] side: [" + message.getSide() + "] price: [" + message.getPrice() +"] Quantity: [" + message.getQuantity() + "]" );
+                addOrUpdatePriceLevel(message);
+                System.out.println("Added to book: [" + message.getPair() + "] side: [" + message.getSide() + "] price: [" + message.getPrice() + "] Quantity: [" + message.getQuantity() + "]");
                 messageObjectPool.returnObject(message);
         }
 
@@ -89,7 +104,7 @@ public abstract class OrderBookProcessor {
     }
 
     /**
-     * Helper method to aqcuire a new object form pool and insert in to chain of price levels
+     * Helper method to acquire a new object from pool and insert in to chain of price levels
      *
      * @param price the price for which no current orders exist
      * @return the newly added price limit
@@ -99,7 +114,7 @@ public abstract class OrderBookProcessor {
         priceLevel.populate(price, quantity);
 
         //Unless this is the first price of this book traverse chain and insert.
-        //This is not thread safe but it needs not to be as only one thread ever will make modifications
+        //This is not thread safe, but it needs not to be as only one thread ever will make modifications
         //on the book.
         if (!topOfBook.compareAndSet(null, priceLevel)) {
             insertInChain(priceLevel, topOfBook.get());
@@ -107,23 +122,14 @@ public abstract class OrderBookProcessor {
         return priceLevel;
     }
 
-    public void setCorrespondingBook(OrderBookProcessor offerProcessor) {
-        this.correspondingProcessor = offerProcessor;
-    }
-
-    public void shutdown() {
-        System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() + "] shutting down.");
-        runningFlag = false;
-    }
-
     /**
      * Helper method to configure the order book thread
      *
-     * @param inboundMdQueue      Queue of inbound market data information
-     * @param inboundRequestQueue Queue of inbound analytics requests
-     * @param outboundQueue       Queue of outbound responses to analytics requests
+     * @param inboundMdQueue        Queue of inbound market data information
+     * @param analyticsRequestQueue Queue of inbound analytics requests
+     * @param outboundResultQueue   Queue of outbound responses to analytics requests
      */
-    private void configureOrderBookThread(final ConcurrentLinkedQueue<Message> inboundMdQueue, final ConcurrentLinkedQueue<Request> inboundRequestQueue, final ConcurrentLinkedQueue<Request> outboundQueue) {
+    private void configureOrderBookThread(final ConcurrentLinkedQueue<Message> inboundMdQueue, final ConcurrentLinkedQueue<Request> analyticsRequestQueue, final ConcurrentLinkedQueue<Request> outboundResultQueue) {
         engineThread = new Thread(() -> {
             System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() + "] started.");
 
@@ -132,30 +138,24 @@ public abstract class OrderBookProcessor {
 
             while (runningFlag) {
 
-                //How to load balance this ultimately comes down to performance considerations
-                //Here I've decided to process all pending requests as long as the other queue does not grow over some
-                //tunable limit and the data does not become antiquated. This allows to focus work on the most demanding
-                // task.
-
-                //With approach below -- Since analytics results can be cached, we can process huge amounts of them
-                //should the market tick slowly. Conversely
+                //How to load balance this ultimately comes down to performance considerations.
+                //The key feature here is that we can run with 100% cpu utilisation 100% of the time, as this
+                //thread never blocks and hence never needs to be context switched out.
+                //Downside is we must handle scheduling manually.
 
                 boolean hasUpdatedBook = false;
 
+                Message marketDataMessage = inboundMdQueue.poll();
 
-                while (inboundRequestQueue.size() < MAX_PENDING_ANALYTICS_REQ && hasTimeToExecute(lastService, inboundRequestQueue.isEmpty())) {
+                while (marketDataMessage != null) {
+                    processMessage(marketDataMessage);
+                    hasUpdatedBook = true;
+                    lastMdUpdate = System.nanoTime();
 
-                    Message marketDataMessage = inboundMdQueue.poll();
-
-                    if(marketDataMessage != null) {
-                        processMessage(marketDataMessage);
-                        hasUpdatedBook = true;
-                        lastMdUpdate = System.nanoTime();
-                    }else{
+                    if (analyticsRequestQueue.size() > MAX_PENDING_ANALYTICS_REQ || isTimeUp(lastService, analyticsRequestQueue)) {
                         break;
                     }
-
-
+                    marketDataMessage = inboundMdQueue.poll();
                 }
 
                 if (hasUpdatedBook) {
@@ -163,49 +163,43 @@ public abstract class OrderBookProcessor {
                     clearCalculationResults();
                 }
 
-                while (inboundMdQueue.size() < MAX_PENDING_MD_UPDATES && hasTimeToExecute(lastMdUpdate, inboundMdQueue.isEmpty())) {
+                Request request = analyticsRequestQueue.poll();
 
-                    Request request = inboundRequestQueue.poll();
+                while (request != null){
 
-                    if(request != null) {
-                        switch (request.getType()) {
+                    switch (request.getType()) {
 
-                            case Vwap:
-                                request.populateResult(vwapCalculations.computeIfAbsent(request.getLevels(), this::calculateVwapOverLevels));
-                                break;
+                        case Vwap:
+                            request.populateResult(vwapCalculations.computeIfAbsent(request.getLevels(), this::calculateVwapOverLevels));
+                            break;
 
-                            case AveragePrice:
-                                request.populateResult(priceCalculations.computeIfAbsent(request.getLevels(), this::calculateAveragePrice));
-                                break;
+                        case AveragePrice:
+                            request.populateResult(priceCalculations.computeIfAbsent(request.getLevels(), this::calculateAveragePrice));
+                            break;
 
-                            case AverageQuantity:
-                                request.populateResult(quantityCalculations.computeIfAbsent(request.getLevels(), this::calculateQtyOverLevels));
-                                break;
-                        }
-                        outboundQueue.add(request);
-                        request = inboundRequestQueue.poll();
-                        lastService = System.nanoTime();
-                    }else{
+                        case AverageQuantity:
+                            request.populateResult(quantityCalculations.computeIfAbsent(request.getLevels(), this::calculateQtyOverLevels));
+                            break;
+                    }
+                    outboundResultQueue.add(request);
+                    lastService = System.nanoTime();
+                    if (inboundMdQueue.size() >= MAX_PENDING_MD_UPDATES || isTimeUp(lastMdUpdate, inboundMdQueue)) {
                         break;
                     }
+                    request = analyticsRequestQueue.poll();
                 }
             }
         }, "OrderBook-" + pair + "-" + getSide());
     }
 
-    private boolean hasTimeToExecute(long lastService, boolean empty) {
-        return empty || System.nanoTime() - lastService > MAX_WAIT_NANOS;
+    private boolean isTimeUp(long lastService, Queue<?> queue) {
+        return !queue.isEmpty() && System.nanoTime() - lastService > MAX_WAIT_NANOS;
     }
 
     private void clearCalculationResults() {
         priceCalculations.clear();
         vwapCalculations.clear();
         quantityCalculations.clear();
-    }
-
-    public void startOrderBook() {
-        runningFlag = true;
-        engineThread.start();
     }
 
     //Methods to be implemented depending on side

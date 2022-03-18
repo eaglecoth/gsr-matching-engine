@@ -5,15 +5,21 @@ t=1638848597|i=SOLUSD|p=3.00|q=10|s=b
 t=1638848597|i=SOLUSD|p=4.0|q=10|s=s
 t=1638848597|i=ETHUSD|p=5.12|q=10|s=b
 t=1638848597|i=ETHUSD|p=6.2|q=10|s=s
-#Test Average Price Buy
+#Test Average Price bid
 t=1638848597|i=BTCUSD|p=1|q=10|s=b
 t=1638848597|i=BTCUSD|p=2|q=10|s=b
 t=1638848597|i=BTCUSD|p=6|q=20|s=b
-#Test Average Price Buy
+#Test Average Price bid
 t=1638848597|i=BTCUSD|p=8|q=40|s=s
 t=1638848597|i=BTCUSD|p=10|q=80|s=s
 t=1638848597|i=BTCUSD|p=12|q=80|s=s
-#Qty updates
+#Qty updates bid
 t=1638848597|i=BTCUSD|p=8|q=40|s=b
 t=1638848597|i=BTCUSD|p=9|q=120|s=b
 t=1638848597|i=BTCUSD|p=8|q=0|s=b
+t=1638848597|i=BTCUSD|p=9|q=0|s=b
+#Qty updates offer
+t=1638848597|i=BTCUSD|p=9|q=40|s=s
+t=1638848597|i=BTCUSD|p=8|q=120|s=s
+t=1638848597|i=BTCUSD|p=9|q=0|s=s
+t=1638848597|i=BTCUSD|p=8|q=0|s=s
