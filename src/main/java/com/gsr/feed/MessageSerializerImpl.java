@@ -17,10 +17,10 @@ public class MessageSerializerImpl implements MessageSerializer {
     private final ObjectPool<Message> messageObjectPool;
     private final String stringDelimiter;
     private final String valueDelimiter;
-    private long offerRetryCount;
-    private long sleepTimeMillis;
+    private final long offerRetryCount;
+    private final long sleepTimeMillis;
 
-    public MessageSerializerImpl(Queue<Message> messageQueue, ObjectPool objectPool, long retryCount, long waitTimeMillis, String delimiter, String keyValueDelimiter) {
+    public MessageSerializerImpl(Queue<Message> messageQueue, ObjectPool<Message> objectPool, long retryCount, long waitTimeMillis, String delimiter, String keyValueDelimiter) {
 
         engineMessageQueue = messageQueue;
         messageObjectPool = objectPool;
@@ -32,8 +32,7 @@ public class MessageSerializerImpl implements MessageSerializer {
 
     /**
      * @param messageString instruction to send to matching engine
-     * @return true if message was sucessfully submitted, else false
-     * @throws InterruptedException thrown if thread is interrupted while sleeping in hope of engine to recover
+     * @return true if message was successfully submitted, else false
      */
     public boolean onMessage(String messageString) {
 

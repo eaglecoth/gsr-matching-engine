@@ -53,14 +53,6 @@ public class Message {
         this.side = side;
     }
 
-    public void populateFields(Message message){
-        this.type = message.getType();
-        this.pair = message.getPair();
-        this.side = message.getSide();
-        this.quantity = message.getQuantity();
-        this.price = message.getPrice();
-    }
-
     @Override
     public String toString() {
         return "Message{" +
@@ -74,9 +66,5 @@ public class Message {
 
     public void setTime(long time) {
         this.time = time;
-    }
-
-    public long getTime() {
-        return time;
     }
 }

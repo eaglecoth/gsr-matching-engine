@@ -8,7 +8,6 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class FileLoader {
 
@@ -37,7 +36,7 @@ public class FileLoader {
 
 
     /**
-     * Don't use this in a jar-file... it won't wokr
+     * Don't use this in a jar-file... it won't work
      * @param fileName market data to load
      * @return a file which can easily be read
      */

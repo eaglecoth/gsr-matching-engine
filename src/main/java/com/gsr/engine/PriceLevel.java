@@ -35,14 +35,6 @@ public class PriceLevel {
         return quantity;
     }
 
-    @Override
-    public String toString() {
-        return "PriceLevel{" +
-                "price=" + price +
-                ", quantity=" + quantity +
-                '}';
-    }
-
     public PriceLevel getNextHigher() {
         return nextHigher;
     }
@@ -79,4 +71,13 @@ public class PriceLevel {
             return true;
         }
     }
+
+    @Override
+    public String toString() {
+        return "PriceLevel{" +
+                "price=" + price +
+                ", quantity=" + quantity +
+                '}';
+    }
+
 }

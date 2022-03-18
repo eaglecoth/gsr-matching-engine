@@ -23,10 +23,6 @@ public class Request {
         this.requestResult = new AtomicReference<>();
     }
 
-    public int getId() {
-        return id;
-    }
-
     public int getLevels() {
         return levels;
     }

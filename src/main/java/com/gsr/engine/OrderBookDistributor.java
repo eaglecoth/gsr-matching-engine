@@ -117,7 +117,7 @@ public class OrderBookDistributor {
     }
 
     public void shutdown() {
-        System.out.println("Shuttingdown OrderBook Distributor");
+        System.out.println("Shutting down OrderBook Distributor");
         runningFlag = false;
     }
 }
