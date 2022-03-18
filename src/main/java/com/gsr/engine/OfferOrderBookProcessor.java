@@ -8,8 +8,13 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class OfferOrderBookProcessor extends OrderBookProcessor{
 
-    public OfferOrderBookProcessor(CcyPair pair, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue, ConcurrentLinkedQueue<Request> requestQueue, ConcurrentLinkedQueue<Request> responseQueue) {
-        super(pair,  messageObjectPool, distributorInboundQueue, requestQueue,responseQueue );
+    public OfferOrderBookProcessor(CcyPair pair,
+                                   ObjectPool<Message> messageObjectPool,
+                                   ConcurrentLinkedQueue<Message> marketDataInboundQueue,
+                                   ConcurrentLinkedQueue<Request> analyticsRequestsQueue,
+                                   ConcurrentLinkedQueue<Request> analyticsResponseQueue) {
+
+        super(pair,  messageObjectPool, marketDataInboundQueue, analyticsRequestsQueue,analyticsResponseQueue );
     }
 
     /**
@@ -19,7 +24,7 @@ public class OfferOrderBookProcessor extends OrderBookProcessor{
      * @param newPriceLevel new price level to be added
      * @param currentPriceLevel price level to compare to, normally start at top of book
      */
-    protected void insertInChain(PriceLevel newPriceLevel, PriceLevel currentPriceLevel) {
+    protected void insertPriceInBook(PriceLevel newPriceLevel, PriceLevel currentPriceLevel) {
         if (newPriceLevel.getPrice() < currentPriceLevel.getPrice()) {
             PriceLevel lowerBelowCurrent = currentPriceLevel.getNextLower();
             if (lowerBelowCurrent == null) {
@@ -39,12 +44,7 @@ public class OfferOrderBookProcessor extends OrderBookProcessor{
             newPriceLevel.setNextLower(currentPriceLevel);
             return;
         }
-        insertInChain(newPriceLevel, currentPriceLevel.getNextHigher());
-    }
-
-    @Override
-    public void setCorrespondingBook(OrderBookProcessor bidProcessor) {
-        this.correspondingProcessor = bidProcessor;
+        insertPriceInBook(newPriceLevel, currentPriceLevel.getNextHigher());
     }
 
     @Override
@@ -73,11 +73,12 @@ public class OfferOrderBookProcessor extends OrderBookProcessor{
             currLevel = currLevel.getNextHigher();
         }
 
+        //Division by 100 to bring the long representation into double based decimal
         return (double) totalPrice / (ptr * 100);
     }
 
     @Override
-    public long calculateQtyOverLevels(int levels) {
+    public long calculateAccumulatedQuantityOverLevels(int levels) {
         int ptr = 0;
         PriceLevel currLevel = topOfBook.get();
         long totalQty= 0;
@@ -101,6 +102,7 @@ public class OfferOrderBookProcessor extends OrderBookProcessor{
             currLevel = currLevel.getNextHigher();
         }
 
-        return  totalPriceWeight / (calculateQtyOverLevels(levels) *100);
+        //Division by 100 to bring the long representation into double based decimal
+        return  totalPriceWeight / (calculateAccumulatedQuantityOverLevels(levels) *100);
     }
 }

@@ -29,13 +29,17 @@ public class OrderBookIntegrationTest {
     private OrderBookProcessor ethOfferProcessor;
     private OrderBookProcessor solOfferProcessor;
     private OrderBookProcessor solBidProcessor;
-    private LinkedBlockingQueue<Message> distributorMdQueue;
-    private LinkedBlockingQueue<Request> analyticsResponseQueue;
-    private LinkedBlockingQueue<Request> analyticsRequestQueue;
+    private ConcurrentLinkedQueue<Message> distributorMdQueue;
+    private ConcurrentLinkedQueue<Request> analyticsRequestQueue;
     private List<String> testMarketData;
     private MessageSerializer serializer;
     private FileLoader fileLoader;
     private final double TEST_ACCEPTANCE_DELTA = 0.000000000001;
+
+
+    //Why a blocking queue here?  Well in a prod scenario something else would make sense -- But this is just a test
+    //class.  Nice and easy to block in wait for test results to arrive
+    private LinkedBlockingQueue<Request> analyticsResponseQueue;
 
 
 
@@ -45,8 +49,8 @@ public class OrderBookIntegrationTest {
     @Before
     public void setup(){
         ObjectPool<Message> messagePool = new ObjectPool<>(Message::new);
-        distributorMdQueue = new LinkedBlockingQueue<>();
-        analyticsRequestQueue = new LinkedBlockingQueue<>();
+        distributorMdQueue = new ConcurrentLinkedQueue<>();
+        analyticsRequestQueue = new ConcurrentLinkedQueue<>();
         analyticsResponseQueue = new LinkedBlockingQueue<>();
 
         List<ConcurrentLinkedQueue<Message>> queues = new ArrayList<>(6);
@@ -72,25 +76,20 @@ public class OrderBookIntegrationTest {
         solBidProcessor = new BidOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(4), requestQueues.get(4), responseQueues.get(4) );
         solOfferProcessor = new OfferOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(5), requestQueues.get(5), responseQueues.get(5));
 
-        btcOfferProcessor.setCorrespondingBook(btcBidProcessor);
-        btcBidProcessor.setCorrespondingBook(btcOfferProcessor);
-        ethOfferProcessor.setCorrespondingBook(ethBidProcessor);
-        ethBidProcessor.setCorrespondingBook(ethOfferProcessor);
-        solOfferProcessor.setCorrespondingBook(solBidProcessor);
-        solBidProcessor.setCorrespondingBook(solOfferProcessor);
-
-        btcOfferProcessor.startOrderBook();
-        btcBidProcessor.startOrderBook();
-        ethOfferProcessor.startOrderBook();
-        ethBidProcessor.startOrderBook();
-        solOfferProcessor.startOrderBook();
-        solBidProcessor.startOrderBook();
+        //Launch the order book threads
+        btcOfferProcessor.launchOrderBookThread();
+        btcBidProcessor.launchOrderBookThread();
+        ethOfferProcessor.launchOrderBookThread();
+        ethBidProcessor.launchOrderBookThread();
+        solOfferProcessor.launchOrderBookThread();
+        solBidProcessor.launchOrderBookThread();
 
 
         //Load the messages from file
         fileLoader = new FileLoader();
         serializer = new MessageSerializerImpl(distributorMdQueue, messagePool, 3, 100, MESSAGE_DELIMITER, KEY_VALUE_DELIMITER);
 
+        //Store test data in list
         testMarketData = fileLoader.readFileEntries("/testUpdates.csv");
     }
 
@@ -98,7 +97,11 @@ public class OrderBookIntegrationTest {
     @Test
     public void testNoCrosses() throws InterruptedException {
 
-        //Check that prices show up on the right book
+        //Take a line from the MD csv file and send to the serializer, which then sends the request on to the
+        //distributor, which will identify the correct order book. We add a sleep here to make sure that the
+        //market data is processed before we send any request for analytics. We can't dance around this if we want to
+        //avoid expensive blocking operations. Which we want.
+
         serializer.onMessage(testMarketData.get(1));
         Thread.sleep(WAIT_TIME);
         analyticsRequestQueue.add(createAnalyticsRequest(1,CcyPair.BTCUSD, Side.Bid, RequestType.AveragePrice, 1));
@@ -305,9 +308,9 @@ public class OrderBookIntegrationTest {
     @After
     public void tearDown() {
         orderBookDistributor.shutdown();
-        btcBidProcessor.shutdown();
-        btcOfferProcessor.shutdown();
-        ethBidProcessor.shutdown();
-        ethOfferProcessor.shutdown();
+        btcBidProcessor.shutDownOrderBookThread();
+        btcOfferProcessor.shutDownOrderBookThread();
+        ethBidProcessor.shutDownOrderBookThread();
+        ethOfferProcessor.shutDownOrderBookThread();
     }
 }

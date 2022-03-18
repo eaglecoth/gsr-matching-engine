@@ -18,7 +18,8 @@ import static com.gsr.data.Constants.*;
 
 
 /**
- * Main running class to test the matching engine. Some sample orders being
+ * Sample class to run the order book replicator. Its not particularly useful. Prefer using OrderBookIntegrationTest
+ * instead.
  */
 public class OrderBookReplicatorRunner {
 
@@ -41,14 +42,15 @@ public class OrderBookReplicatorRunner {
 
         ObjectPool<Message> messagePool = new ObjectPool<>(Message::new);
 
-        LinkedBlockingQueue<Message> distributorInboundQueue = new LinkedBlockingQueue<>();
+        ConcurrentLinkedQueue<Message> distributorInboundQueue = new ConcurrentLinkedQueue<>();
         MessageSerializer serializer = new MessageSerializerImpl(distributorInboundQueue, messagePool, 3, 100, MESSAGE_DELIMITER, KEY_VALUE_DELIMITER);
 
-        LinkedBlockingQueue<Request> analyticsRequestQueue = new LinkedBlockingQueue<>();
+        ConcurrentLinkedQueue<Request> analyticsRequestQueue = new ConcurrentLinkedQueue<>();
         LinkedBlockingQueue<Request>  analyticsResponseQueue = new LinkedBlockingQueue<>();
         OrderBookDistributor orderBookDistributor = new OrderBookDistributor(distributorInboundQueue, analyticsRequestQueue, queues, requestQueues, responseQueues, analyticsResponseQueue);
 
 
+        //Configure instances for each pair and side
         OrderBookProcessor btcOfferProcessor = new OfferOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(0), requestQueues.get(0), responseQueues.get(0)) ;
         OrderBookProcessor btcBidProcessor = new BidOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(1), requestQueues.get(1), responseQueues.get(1));
         OrderBookProcessor ethBidProcessor = new BidOrderBookProcessor(CcyPair.ETHUSD,   messagePool, queues.get(2), requestQueues.get(2), responseQueues.get(2));
@@ -56,21 +58,14 @@ public class OrderBookReplicatorRunner {
         OrderBookProcessor solBidProcessor = new BidOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(4), requestQueues.get(4), responseQueues.get(4) );
         OrderBookProcessor solOfferProcessor = new OfferOrderBookProcessor(CcyPair.SOLUSD,   messagePool, queues.get(5), requestQueues.get(5), responseQueues.get(5));
 
-        btcOfferProcessor.setCorrespondingBook(btcBidProcessor);
-        btcBidProcessor.setCorrespondingBook(btcOfferProcessor);
-        ethOfferProcessor.setCorrespondingBook(ethBidProcessor);
-        ethBidProcessor.setCorrespondingBook(ethOfferProcessor);
-        solOfferProcessor.setCorrespondingBook(solBidProcessor);
-        solBidProcessor.setCorrespondingBook(solOfferProcessor);
 
-
-        btcOfferProcessor.startOrderBook();
-        btcBidProcessor.startOrderBook();
-        ethOfferProcessor.startOrderBook();
-        ethBidProcessor.startOrderBook();
-        solOfferProcessor.startOrderBook();
-        solBidProcessor.startOrderBook();
-
+        //Start the treads for each of the order book sides
+        btcOfferProcessor.launchOrderBookThread();
+        btcBidProcessor.launchOrderBookThread();
+        ethOfferProcessor.launchOrderBookThread();
+        ethBidProcessor.launchOrderBookThread();
+        solOfferProcessor.launchOrderBookThread();
+        solBidProcessor.launchOrderBookThread();
 
 
         //Load the messages from file, send to the engine via the serializer
@@ -82,9 +77,9 @@ public class OrderBookReplicatorRunner {
 
 
         orderBookDistributor.shutdown();
-        btcBidProcessor.shutdown();
-        btcOfferProcessor.shutdown();
-        ethBidProcessor.shutdown();
-        ethOfferProcessor.shutdown();
+        btcBidProcessor.shutDownOrderBookThread();
+        btcOfferProcessor.shutDownOrderBookThread();
+        ethBidProcessor.shutDownOrderBookThread();
+        ethOfferProcessor.shutDownOrderBookThread();
     }
 }

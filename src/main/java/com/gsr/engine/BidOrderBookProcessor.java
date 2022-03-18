@@ -17,38 +17,38 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
     }
 
     @Override
-    protected Side getSide() {
-        return Side.Bid;
-    }
+    public double calculateAveragePrice(int maxLevel) {
 
-    @Override
-    public double calculateAveragePrice(int levels) {
-        int ptr = 0;
-        PriceLevel currLevel = topOfBook.get();
-
-        if(currLevel == null){
-            return 0;
-        }
-
+        PriceLevel currentPriceLevel = topOfBook.get();
         long totalPrice= 0;
-        while(ptr < levels && currLevel != null){
-            totalPrice += currLevel.getPrice();
-            ptr +=1;
-            currLevel = currLevel.getNextLower();
+
+        if(currentPriceLevel == null){
+            //We don't have any price for this side of this pair
+            return totalPrice;
         }
 
-        return (double) totalPrice / (ptr * 100);
+        int priceLevelPtr = 0;
+        while(priceLevelPtr < maxLevel && currentPriceLevel != null){
+
+            totalPrice += currentPriceLevel.getPrice();
+            currentPriceLevel = currentPriceLevel.getNextLower();
+            priceLevelPtr +=1;
+        }
+
+        //Division by 100 to bring the long representation into double based decimal
+        return (double) totalPrice / (priceLevelPtr * 100);
     }
 
     @Override
-    public long calculateQtyOverLevels(int levels) {
-        int ptr = 0;
-        PriceLevel currLevel = topOfBook.get();
+    public long calculateAccumulatedQuantityOverLevels(int maxPriceLevel) {
+
+        int priceLevelPtr = 0;
+        PriceLevel currentPriceLevel = topOfBook.get();
         long totalQty= 0;
-        while(ptr < levels && currLevel != null){
-            totalQty += currLevel.getQuantity();
-            ptr +=1;
-            currLevel = currLevel.getNextLower();
+        while(priceLevelPtr < maxPriceLevel && currentPriceLevel != null){
+            totalQty += currentPriceLevel.getQuantity();
+            priceLevelPtr +=1;
+            currentPriceLevel = currentPriceLevel.getNextLower();
         }
 
         return totalQty;
@@ -65,22 +65,24 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
             currLevel = currLevel.getNextLower();
         }
 
-        return  totalPriceWeight / (calculateQtyOverLevels(levels) *100);
+        //Division by 100 to bring the long representation into double based decimal
+        return  totalPriceWeight / (calculateAccumulatedQuantityOverLevels(levels) *100);
     }
 
     @Override
     protected double getTopOfBookPrice() {
+        //Division by 100 to bring the long representation into double based decimal
         return topOfBook.get() == null ? 0 : (double)topOfBook.get().getPrice() / 100;
     }
 
 
     /**
-     * Limits are ordered in a sorted double linked list. When a new limit arrives, we traverse the list and insert
-     * at the appropriate spot
+     * Prices are ordered in a sorted double linked list. When a new price arrives, we recursively traverse the list
+     * and insert at the appropriate spot
      * @param priceToInsert new price level to be added
      * @param currentPriceLevel price level to compare to, normally start at top of book
      */
-    protected void insertInChain(PriceLevel priceToInsert, PriceLevel currentPriceLevel) {
+    protected void insertPriceInBook(PriceLevel priceToInsert, PriceLevel currentPriceLevel) {
         if (priceToInsert.getPrice() > currentPriceLevel.getPrice()) {
             PriceLevel limitAboveCurrent = currentPriceLevel.getNextHigher();
             if (limitAboveCurrent == null) {
@@ -104,6 +106,11 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
             return;
         }
         //Recurse and step to the next limit in the book
-        insertInChain(priceToInsert, currentPriceLevel.getNextLower());
+        insertPriceInBook(priceToInsert, currentPriceLevel.getNextLower());
+    }
+
+    @Override
+    protected Side getSide() {
+        return Side.Bid;
     }
 }

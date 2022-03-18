@@ -14,48 +14,120 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public abstract class OrderBookProcessor {
     private Thread engineThread;
-    private final CcyPair pair;
+    private final CcyPair ccyPair;
 
     private final int MAX_PENDING_MD_UPDATES = 100;
     private final int MAX_PENDING_ANALYTICS_REQ = 100;
     private final int MAX_WAIT_NANOS = 20000;
 
     protected volatile boolean runningFlag;
-    protected final TreeMap<Long, PriceLevel> orderBook = new TreeMap<>();
+    protected final TreeMap<Long, PriceLevel> orderBookPriceIndex = new TreeMap<>();
     protected final ObjectPool<Message> messageObjectPool;
     private final ObjectPool<PriceLevel> priceLevelObjectPool;
     protected AtomicReference<PriceLevel> topOfBook;
 
-    private final Map<Integer, Long> quantityCalculations = new HashMap<>();
-    private final Map<Integer, Double> vwapCalculations = new HashMap<>();
-    private final Map<Integer, Double> priceCalculations = new HashMap<>();
+    private final Map<Integer, Long> quantityCalculationsCache = new HashMap<>();
+    private final Map<Integer, Double> vwapCalculationsCache = new HashMap<>();
+    private final Map<Integer, Double> priceCalculationsCache = new HashMap<>();
 
-    protected volatile OrderBookProcessor correspondingProcessor;
+    public OrderBookProcessor(CcyPair ccyPair,
+                              ObjectPool<Message> messageObjectPool,
+                              ConcurrentLinkedQueue<Message> marketDataInboundQueue,
+                              ConcurrentLinkedQueue<Request> analyticsRequestQueue,
+                              ConcurrentLinkedQueue<Request> analyticsResponseQueue) {
 
-    public OrderBookProcessor(CcyPair pair, ObjectPool<Message> messageObjectPool, ConcurrentLinkedQueue<Message> distributorInboundQueue, ConcurrentLinkedQueue<Request> requestQueue, ConcurrentLinkedQueue<Request> responseQueue) {
-
+        this.ccyPair = ccyPair;
         this.messageObjectPool = messageObjectPool;
-        this.pair = pair;
         this.priceLevelObjectPool = new ObjectPool<>(PriceLevel::new);
         this.topOfBook = new AtomicReference<>(null);
 
-        configureOrderBookThread(distributorInboundQueue, requestQueue, responseQueue);
+        configureOrderBookThread(marketDataInboundQueue, analyticsRequestQueue, analyticsResponseQueue);
     }
 
-    public void startOrderBook() {
+    /**
+     * Main method to configure the order book thread and its main execution task.
+     *
+     * The thread will read both market data updates, and service requests for analytics.  How these two conflicting
+     * tasks are balanced is ultimately up to performance considerations.  The key feature here is that no
+     * synchronization is required at any time which means 100% cpu utilisation a 100% of the time. Just pin each
+     * of these threads to a specific CPU core.
+     *
+     *
+     * @param inboundMdQueue        Queue of inbound market data information
+     * @param analyticsRequestQueue Queue of inbound analytics requests
+     * @param outboundResultQueue   Queue of outbound responses to analytics requests
+     */
+    private void configureOrderBookThread(final ConcurrentLinkedQueue<Message> inboundMdQueue, final ConcurrentLinkedQueue<Request> analyticsRequestQueue, final ConcurrentLinkedQueue<Request> outboundResultQueue) {
+        engineThread = new Thread(() -> {
+            System.out.println("Order Book Processor on ccy: [" + ccyPair + "] on side: [" + getSide() + "] started.");
+
+            long lastMdUpdate = Long.MAX_VALUE;
+            long lastService = Long.MAX_VALUE;
+
+            while (runningFlag) {
+
+                boolean hasUpdatedBook = false;
+
+                Message marketDataMessage = inboundMdQueue.poll();
+
+                while (marketDataMessage != null) {
+                    processMessage(marketDataMessage);
+                    hasUpdatedBook = true;
+                    lastMdUpdate = System.nanoTime();
+
+                    if (analyticsRequestQueue.size() > MAX_PENDING_ANALYTICS_REQ || isTimeUp(lastService, analyticsRequestQueue)) {
+                        //If we pooled up too many analytics requests, or we have pending requests, but we've been executing
+                        //for too long, we must give up on the incoming MD and service the analytics requests.
+                        break;
+                    }
+                    marketDataMessage = inboundMdQueue.poll();
+                }
+
+                if (hasUpdatedBook) {
+                    //The cached analytics results are now no longer correct and must be removed
+                    clearCalculationResultCache();
+                }
+
+                Request request = analyticsRequestQueue.poll();
+
+                while (request != null){
+
+                    switch (request.getType()) {
+
+                        case Vwap:
+                            request.populateResult(vwapCalculationsCache.computeIfAbsent(request.getLevels(), this::calculateVwapOverLevels));
+                            break;
+
+                        case AveragePrice:
+                            request.populateResult(priceCalculationsCache.computeIfAbsent(request.getLevels(), this::calculateAveragePrice));
+                            break;
+
+                        case AverageQuantity:
+                            request.populateResult(quantityCalculationsCache.computeIfAbsent(request.getLevels(), this::calculateAccumulatedQuantityOverLevels));
+                            break;
+                    }
+                    outboundResultQueue.add(request);
+                    lastService = System.nanoTime();
+                    if (inboundMdQueue.size() >= MAX_PENDING_MD_UPDATES || isTimeUp(lastMdUpdate, inboundMdQueue)) {
+                        //If we pooled up too many md updates, or we have pending requests, but we've been executing
+                        //for too long, we must give up on the analytics requests and update the book with new MD.
+                        break;
+                    }
+                    request = analyticsRequestQueue.poll();
+                }
+            }
+        }, "OrderBook-" + ccyPair + "-" + getSide());
+    }
+
+    public void launchOrderBookThread() {
         runningFlag = true;
         engineThread.start();
     }
 
-    public void setCorrespondingBook(OrderBookProcessor offerProcessor) {
-        this.correspondingProcessor = offerProcessor;
-    }
-
-    public void shutdown() {
-        System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() + "] shutting down.");
+    public void shutDownOrderBookThread() {
+        System.out.println("Order Book Processor on ccy: [" + ccyPair + "] on side: [" + getSide() + "] shutting down.");
         runningFlag = false;
     }
-
 
     /**
      * Main processing method.  Incoming messages are categorised by type and processed accordingly. All processing
@@ -67,8 +139,9 @@ public abstract class OrderBookProcessor {
 
         switch (message.getType()) {
             case RemovePriceLevel:
-                PriceLevel levelToRemove = orderBook.remove(message.getPrice());
+                PriceLevel levelToRemove = orderBookPriceIndex.remove(message.getPrice());
                 if (levelToRemove != null && levelToRemove.removePriceFromBook()) {
+                    //The price level we removed was the last one in the book. Hence top of book should be set to null
                     topOfBook.set(null);
                 }
                 System.out.println("Removed from book: [" + message.getPair() + "] side: [" + message.getSide() + "] price: [" + message.getPrice() + "]");
@@ -91,7 +164,7 @@ public abstract class OrderBookProcessor {
      */
     private void addOrUpdatePriceLevel(final Message message) {
 
-        orderBook.compute(message.getPrice(), (priceLevel, limit) -> {
+        orderBookPriceIndex.compute(message.getPrice(), (priceLevel, limit) -> {
 
             //If this is the first order of this price create the new limit book
             if (limit == null) {
@@ -117,100 +190,40 @@ public abstract class OrderBookProcessor {
         //This is not thread safe, but it needs not to be as only one thread ever will make modifications
         //on the book.
         if (!topOfBook.compareAndSet(null, priceLevel)) {
-            insertInChain(priceLevel, topOfBook.get());
+            insertPriceInBook(priceLevel, topOfBook.get());
         }
         return priceLevel;
     }
 
+
     /**
-     * Helper method to configure the order book thread
      *
-     * @param inboundMdQueue        Queue of inbound market data information
-     * @param analyticsRequestQueue Queue of inbound analytics requests
-     * @param outboundResultQueue   Queue of outbound responses to analytics requests
+     * @param lastService last time we serviced a request from the queue
+     * @param queue the queue in question
+     * @return true if we have been executing for too long and the queue has pending messages
      */
-    private void configureOrderBookThread(final ConcurrentLinkedQueue<Message> inboundMdQueue, final ConcurrentLinkedQueue<Request> analyticsRequestQueue, final ConcurrentLinkedQueue<Request> outboundResultQueue) {
-        engineThread = new Thread(() -> {
-            System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() + "] started.");
-
-            long lastMdUpdate = Long.MAX_VALUE;
-            long lastService = Long.MAX_VALUE;
-
-            while (runningFlag) {
-
-                //How to load balance this ultimately comes down to performance considerations.
-                //The key feature here is that we can run with 100% cpu utilisation 100% of the time, as this
-                //thread never blocks and hence never needs to be context switched out.
-                //Downside is we must handle scheduling manually.
-
-                boolean hasUpdatedBook = false;
-
-                Message marketDataMessage = inboundMdQueue.poll();
-
-                while (marketDataMessage != null) {
-                    processMessage(marketDataMessage);
-                    hasUpdatedBook = true;
-                    lastMdUpdate = System.nanoTime();
-
-                    if (analyticsRequestQueue.size() > MAX_PENDING_ANALYTICS_REQ || isTimeUp(lastService, analyticsRequestQueue)) {
-                        break;
-                    }
-                    marketDataMessage = inboundMdQueue.poll();
-                }
-
-                if (hasUpdatedBook) {
-                    //The cached analytics results are now no longer correct and must be removed
-                    clearCalculationResults();
-                }
-
-                Request request = analyticsRequestQueue.poll();
-
-                while (request != null){
-
-                    switch (request.getType()) {
-
-                        case Vwap:
-                            request.populateResult(vwapCalculations.computeIfAbsent(request.getLevels(), this::calculateVwapOverLevels));
-                            break;
-
-                        case AveragePrice:
-                            request.populateResult(priceCalculations.computeIfAbsent(request.getLevels(), this::calculateAveragePrice));
-                            break;
-
-                        case AverageQuantity:
-                            request.populateResult(quantityCalculations.computeIfAbsent(request.getLevels(), this::calculateQtyOverLevels));
-                            break;
-                    }
-                    outboundResultQueue.add(request);
-                    lastService = System.nanoTime();
-                    if (inboundMdQueue.size() >= MAX_PENDING_MD_UPDATES || isTimeUp(lastMdUpdate, inboundMdQueue)) {
-                        break;
-                    }
-                    request = analyticsRequestQueue.poll();
-                }
-            }
-        }, "OrderBook-" + pair + "-" + getSide());
-    }
-
     private boolean isTimeUp(long lastService, Queue<?> queue) {
         return !queue.isEmpty() && System.nanoTime() - lastService > MAX_WAIT_NANOS;
     }
 
-    private void clearCalculationResults() {
-        priceCalculations.clear();
-        vwapCalculations.clear();
-        quantityCalculations.clear();
+    /**
+     * Helper method to clear cache
+     */
+    private void clearCalculationResultCache() {
+        priceCalculationsCache.clear();
+        vwapCalculationsCache.clear();
+        quantityCalculationsCache.clear();
     }
 
     //Methods to be implemented depending on side
 
-    abstract void insertInChain(PriceLevel newPriceLevel, PriceLevel currentPriceLevel);
+    abstract void insertPriceInBook(PriceLevel newPriceLevel, PriceLevel currentPriceLevel);
 
     protected abstract Side getSide();
 
     public abstract double calculateAveragePrice(int levels);
 
-    public abstract long calculateQtyOverLevels(int levels);
+    public abstract long calculateAccumulatedQuantityOverLevels(int levels);
 
     public abstract double calculateVwapOverLevels(int levels);
 

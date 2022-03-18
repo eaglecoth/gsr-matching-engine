@@ -14,22 +14,26 @@ import java.util.concurrent.LinkedBlockingQueue;
  * Class responsible for unpacking instructions and sending them for processing to the correct threads.
  * One thread running for each Currency pairs side of book.
  * Non blocking thread communication is provided via ConcurrentLinkedQueues.
+ * <p>
+ * The purpose of this class is to allow mulitple different orderbooks to be accessed through a single point of contact.
+ * <p>
+ * This is vastly simplified in the perspective of pro engines. But requirements stipulated 3 currency pairs only.
  */
 public class OrderBookDistributor {
 
 
-    private final Map<CcyPair,Map<Side,Queue<Request>>> requestResponseQueues = new HashMap<>();
-    private final Map<CcyPair,Map<Side,Queue<Request>>>   outboundRequestQueues = new HashMap<>();
-    private final Map<CcyPair,Map<Side,Queue<Message>>>   outboundMdQueues = new HashMap<>();
+    private final Map<CcyPair, Map<Side, Queue<Request>>> requestResponseQueues = new HashMap<>();
+    private final Map<CcyPair, Map<Side, Queue<Request>>> outboundRequestQueues = new HashMap<>();
+    private final Map<CcyPair, Map<Side, Queue<Message>>> outboundMdQueues = new HashMap<>();
 
-    private final LinkedBlockingQueue<Request> incomingAnalyticsRequestQueue;
-    private final LinkedBlockingQueue<Message> incomingMarketDataQueue;
+    private final ConcurrentLinkedQueue<Request> incomingAnalyticsRequestQueue;
+    private final ConcurrentLinkedQueue<Message> incomingMarketDataQueue;
     private final Queue<Request> analyticsResponseQueue;
 
     private volatile boolean runningFlag = true;
 
-    public OrderBookDistributor(LinkedBlockingQueue<Message> incomingMarketDataQueue,
-                                LinkedBlockingQueue<Request> incomingAnalyticsRequests,
+    public OrderBookDistributor(ConcurrentLinkedQueue<Message> incomingMarketDataQueue,
+                                ConcurrentLinkedQueue<Request> incomingAnalyticsRequests,
                                 List<ConcurrentLinkedQueue<Message>> engineQueues,
                                 List<ConcurrentLinkedQueue<Request>> requestQueues,
                                 List<ConcurrentLinkedQueue<Request>> responseQueues,
@@ -40,33 +44,39 @@ public class OrderBookDistributor {
         this.incomingMarketDataQueue = incomingMarketDataQueue;
         this.incomingAnalyticsRequestQueue = incomingAnalyticsRequests;
 
+        //Create maps for storage of communication queues
         Arrays.stream(CcyPair.values()).forEach(p -> {
             outboundRequestQueues.put(p, new HashMap<>());
             outboundMdQueues.put(p, new HashMap<>());
             requestResponseQueues.put(p, new HashMap<>());
         });
 
-        outboundMdQueues.get(CcyPair.BTCUSD).put(Side.Offer,engineQueues.get(0));
-        outboundMdQueues.get(CcyPair.BTCUSD).put(Side.Bid,engineQueues.get(1));
-        outboundMdQueues.get(CcyPair.ETHUSD).put(Side.Offer,engineQueues.get(2));
-        outboundMdQueues.get(CcyPair.ETHUSD).put(Side.Bid,engineQueues.get(3));
-        outboundMdQueues.get(CcyPair.SOLUSD).put(Side.Offer,engineQueues.get(4));
-        outboundMdQueues.get(CcyPair.SOLUSD).put(Side.Bid,engineQueues.get(5));
 
-        outboundRequestQueues.get(CcyPair.BTCUSD).put(Side.Offer,requestQueues.get(0));
-        outboundRequestQueues.get(CcyPair.BTCUSD).put(Side.Bid,requestQueues.get(1));
-        outboundRequestQueues.get(CcyPair.ETHUSD).put(Side.Offer,requestQueues.get(2));
-        outboundRequestQueues.get(CcyPair.ETHUSD).put(Side.Bid,requestQueues.get(3));
-        outboundRequestQueues.get(CcyPair.SOLUSD).put(Side.Offer,requestQueues.get(4));
-        outboundRequestQueues.get(CcyPair.SOLUSD).put(Side.Bid,requestQueues.get(5));
+        //Add the different queues to map for simplified access
+        outboundMdQueues.get(CcyPair.BTCUSD).put(Side.Offer, engineQueues.get(0));
+        outboundMdQueues.get(CcyPair.BTCUSD).put(Side.Bid, engineQueues.get(1));
+        outboundMdQueues.get(CcyPair.ETHUSD).put(Side.Offer, engineQueues.get(2));
+        outboundMdQueues.get(CcyPair.ETHUSD).put(Side.Bid, engineQueues.get(3));
+        outboundMdQueues.get(CcyPair.SOLUSD).put(Side.Offer, engineQueues.get(4));
+        outboundMdQueues.get(CcyPair.SOLUSD).put(Side.Bid, engineQueues.get(5));
+
+        outboundRequestQueues.get(CcyPair.BTCUSD).put(Side.Offer, requestQueues.get(0));
+        outboundRequestQueues.get(CcyPair.BTCUSD).put(Side.Bid, requestQueues.get(1));
+        outboundRequestQueues.get(CcyPair.ETHUSD).put(Side.Offer, requestQueues.get(2));
+        outboundRequestQueues.get(CcyPair.ETHUSD).put(Side.Bid, requestQueues.get(3));
+        outboundRequestQueues.get(CcyPair.SOLUSD).put(Side.Offer, requestQueues.get(4));
+        outboundRequestQueues.get(CcyPair.SOLUSD).put(Side.Bid, requestQueues.get(5));
 
 
-        requestResponseQueues.get(CcyPair.BTCUSD).put(Side.Offer,responseQueues.get(0));
-        requestResponseQueues.get(CcyPair.BTCUSD).put(Side.Bid,responseQueues.get(1));
-        requestResponseQueues.get(CcyPair.ETHUSD).put(Side.Offer,responseQueues.get(2));
-        requestResponseQueues.get(CcyPair.ETHUSD).put(Side.Bid,responseQueues.get(3));
-        requestResponseQueues.get(CcyPair.SOLUSD).put(Side.Offer,responseQueues.get(4));
-        requestResponseQueues.get(CcyPair.SOLUSD).put(Side.Bid,responseQueues.get(5));
+        requestResponseQueues.get(CcyPair.BTCUSD).put(Side.Offer, responseQueues.get(0));
+        requestResponseQueues.get(CcyPair.BTCUSD).put(Side.Bid, responseQueues.get(1));
+        requestResponseQueues.get(CcyPair.ETHUSD).put(Side.Offer, responseQueues.get(2));
+        requestResponseQueues.get(CcyPair.ETHUSD).put(Side.Bid, responseQueues.get(3));
+        requestResponseQueues.get(CcyPair.SOLUSD).put(Side.Offer, responseQueues.get(4));
+        requestResponseQueues.get(CcyPair.SOLUSD).put(Side.Bid, responseQueues.get(5));
+
+
+        //Configure threads for handling of inbound and outbound traffic
 
         Thread mdThread = new Thread(() -> {
             System.out.println("Order Book Distributor Running");
@@ -84,11 +94,8 @@ public class OrderBookDistributor {
 
             while (runningFlag) {
                 Request request = null;
-                try {
-                    request = incomingAnalyticsRequestQueue.take();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+                request = incomingAnalyticsRequestQueue.poll();
+
                 if (request != null) {
                     outboundRequestQueues.get(request.getPair()).get(request.getSide()).add(request);
                 }
@@ -100,7 +107,7 @@ public class OrderBookDistributor {
             System.out.println("Analytics Response Collector Running");
 
             while (runningFlag) {
-                for(Map<Side,Queue<Request>> map : requestResponseQueues.values()) {
+                for (Map<Side, Queue<Request>> map : requestResponseQueues.values()) {
                     for (Queue<Request> list : map.values()) {
                         Request request = list.poll();
                         if (request != null) {
