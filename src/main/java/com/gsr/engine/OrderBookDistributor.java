@@ -1,9 +1,12 @@
 package com.gsr.engine;
 
+import com.gsr.analytics.Request;
+import com.gsr.data.CcyPair;
 import com.gsr.data.Message;
+import com.gsr.data.Side;
 import com.gsr.feed.ObjectPool;
 
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -14,98 +17,100 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class OrderBookDistributor {
 
 
+    private final Map<CcyPair,Map<Side,ConcurrentLinkedQueue<Request>>> requestResponseQueues = new HashMap<>();
+    private final Map<CcyPair,Map<Side,ConcurrentLinkedQueue<Request>>>   outboundRequestQueues = new HashMap<>();
+    private final Map<CcyPair,Map<Side,ConcurrentLinkedQueue<Message>>>   outboundMdQueues = new HashMap<>();
+
+    private final ConcurrentLinkedQueue<Request> incomingAnalyticsRequestQueue;
+    private final ConcurrentLinkedQueue<Message> incomingMarketDataQueue;
+    private final ConcurrentLinkedQueue<Request> analyticsResponseQueue;
+
     private volatile boolean runningFlag = true;
-    private final ConcurrentLinkedQueue<Message> incomingMessageQueue;
-    private final ConcurrentLinkedQueue<Message> btcUsdOfferBookQueue;
-    private final ConcurrentLinkedQueue<Message> btcUsdBidBookQueue;
-    private final ConcurrentLinkedQueue<Message> ethUsdOfferBookQueue;
-    private final ConcurrentLinkedQueue<Message> ethUsdBidBookQueue;
-    private final ConcurrentLinkedQueue<Message> solUsdOfferBookQueue;
-    private final ConcurrentLinkedQueue<Message> solUsdBidBookQueue;
+
     private final ObjectPool<Message> messagePool;
 
-    public OrderBookDistributor(ConcurrentLinkedQueue<Message> inboundQueue, List<ConcurrentLinkedQueue<Message>> engineQueues, ObjectPool<Message> messagePool) {
+    public OrderBookDistributor(ConcurrentLinkedQueue<Message> incomingMarketDataQueue,
+                                ConcurrentLinkedQueue<Request> incomingAnalyticsRequests,
+                                List<ConcurrentLinkedQueue<Message>> engineQueues,
+                                List<ConcurrentLinkedQueue<Request>> requestQueues,
+                                List<ConcurrentLinkedQueue<Request>> responseQueues,
+                                ConcurrentLinkedQueue<Request> analyticsResponseQueue,
+                                ObjectPool<Message> messagePool) {
 
         this.messagePool = messagePool;
+        this.analyticsResponseQueue = analyticsResponseQueue;
 
-        incomingMessageQueue = inboundQueue;
-        btcUsdOfferBookQueue = engineQueues.get(0);
-        btcUsdBidBookQueue = engineQueues.get(1);
-        ethUsdOfferBookQueue = engineQueues.get(2);
-        ethUsdBidBookQueue = engineQueues.get(3);
-        solUsdOfferBookQueue = engineQueues.get(4);
-        solUsdBidBookQueue = engineQueues.get(5);
+        this.incomingMarketDataQueue = incomingMarketDataQueue;
+        this.incomingAnalyticsRequestQueue = incomingAnalyticsRequests;
 
-        Thread thread = new Thread(() -> {
+        Arrays.stream(CcyPair.values()).forEach(p -> {
+            outboundRequestQueues.put(p, new HashMap<>());
+            outboundMdQueues.put(p, new HashMap<>());
+        });
+
+        outboundMdQueues.get(CcyPair.BTCUSD).put(Side.Offer,engineQueues.get(0));
+        outboundMdQueues.get(CcyPair.BTCUSD).put(Side.Bid,engineQueues.get(1));
+        outboundMdQueues.get(CcyPair.ETHUSD).put(Side.Offer,engineQueues.get(2));
+        outboundMdQueues.get(CcyPair.ETHUSD).put(Side.Bid,engineQueues.get(3));
+        outboundMdQueues.get(CcyPair.SOLUSD).put(Side.Offer,engineQueues.get(4));
+        outboundMdQueues.get(CcyPair.SOLUSD).put(Side.Bid,engineQueues.get(5));
+
+        outboundRequestQueues.get(CcyPair.BTCUSD).put(Side.Offer,requestQueues.get(0));
+        outboundRequestQueues.get(CcyPair.BTCUSD).put(Side.Bid,requestQueues.get(1));
+        outboundRequestQueues.get(CcyPair.ETHUSD).put(Side.Offer,requestQueues.get(2));
+        outboundRequestQueues.get(CcyPair.ETHUSD).put(Side.Bid,requestQueues.get(3));
+        outboundRequestQueues.get(CcyPair.SOLUSD).put(Side.Offer,requestQueues.get(4));
+        outboundRequestQueues.get(CcyPair.SOLUSD).put(Side.Bid,requestQueues.get(5));
+
+
+        requestResponseQueues.get(CcyPair.BTCUSD).put(Side.Offer,responseQueues.get(0));
+        requestResponseQueues.get(CcyPair.BTCUSD).put(Side.Bid,responseQueues.get(1));
+        requestResponseQueues.get(CcyPair.ETHUSD).put(Side.Offer,responseQueues.get(2));
+        requestResponseQueues.get(CcyPair.ETHUSD).put(Side.Bid,responseQueues.get(3));
+        requestResponseQueues.get(CcyPair.SOLUSD).put(Side.Offer,responseQueues.get(4));
+        requestResponseQueues.get(CcyPair.SOLUSD).put(Side.Bid,responseQueues.get(5));
+
+        Thread mdThread = new Thread(() -> {
             System.out.println("Order Book Distributor Running");
 
             while (runningFlag) {
-                Message message = incomingMessageQueue.poll();
+                Message message = this.incomingMarketDataQueue.poll();
                 if (message != null) {
-                    processMessage(message);
+                    outboundMdQueues.get(message.getPair()).get(message.getSide()).add(message);
                 }
             }
-        });
+        }, "Market Data Distributor");
 
-        thread.start();
-    }
+        Thread analyticsThread = new Thread(() -> {
+            System.out.println("Analytics Request Distributor Running");
 
-    /**
-     * Helper method to decide which queue to send a particular request to.
-     *
-     * @param message
-     */
-    private void processMessage(Message message) {
-
-        switch (message.getType()) {
-
-            case AddOrUpdatePriceLevel:
-                switch (message.getSide()) {
-                    case Offer:
-                        switch (message.getPair()) {
-                            case ETHUSD:
-                                ethUsdOfferBookQueue.add(message);
-                                return;
-                            case BTCUSD:
-                                btcUsdOfferBookQueue.add(message);
-                                return;
-                            case SOLUSD:
-                                solUsdOfferBookQueue.add(message);
-                        }
-
-                        break;
-                    case Bid:
-                        switch (message.getPair()) {
-                            case ETHUSD:
-                                ethUsdBidBookQueue.add(message);
-                                return;
-                            case BTCUSD:
-                                btcUsdBidBookQueue.add(message);
-                                return;
-                            case SOLUSD:
-                                solUsdBidBookQueue.add(message);
-                        }
-                        break;
-                    default:
-                        System.out.println("Unexpected Message Type which is not handled: " + message.getSide());
-                        messagePool.returnObject(message);
-                        return;
+            while (runningFlag) {
+                Request request = incomingAnalyticsRequestQueue.poll();
+                if (request != null) {
+                    outboundRequestQueues.get(request.getPair()).get(request.getSide()).add(request);
                 }
+            }
+        }, "Analytics Request Distributor");
 
-            case RemovePriceLevel:
-                //To avoid having to synchronize between threads. Send the same to all. Let them do their stuff.
-                sendClonedMessage(btcUsdBidBookQueue, message);
-                sendClonedMessage(btcUsdOfferBookQueue, message);
-                sendClonedMessage(ethUsdBidBookQueue, message);
-                sendClonedMessage(ethUsdOfferBookQueue, message);
-                messagePool.returnObject(message);
-        }
-    }
 
-    private void sendClonedMessage(ConcurrentLinkedQueue<Message> queue, Message message) {
-        Message cloneMessage = messagePool.acquireObject();
-        cloneMessage.populateFields(message);
-        queue.add(cloneMessage);
+        Thread responseThread = new Thread(() -> {
+            System.out.println("Analytics Response Collector Running");
+
+            while (runningFlag) {
+                for(Map<Side, ConcurrentLinkedQueue<Request>> map : requestResponseQueues.values()) {
+                    for (ConcurrentLinkedQueue<Request> list : map.values()) {
+                        Request request = list.poll();
+                        if (request != null) {
+                            analyticsResponseQueue.add(request);
+                        }
+                    }
+                }
+            }
+        }, "Analytics Response Collector");
+
+        mdThread.start();
+        analyticsThread.start();
+        responseThread.start();
     }
 
     public void shutdown() {

@@ -43,7 +43,9 @@ public class OrderBookReplicatorRunner {
         ConcurrentLinkedQueue<Message> distributorInboundQueue = new ConcurrentLinkedQueue<>();
         MessageSerializer serializer = new MessageSerializerImpl(distributorInboundQueue, messagePool, 3, 100, MESSAGE_DELIMITER, KEY_VALUE_DELIMITER);
 
-        OrderBookDistributor orderBookDistributor = new OrderBookDistributor(distributorInboundQueue, queues, messagePool);
+        ConcurrentLinkedQueue<Request> analyticsRequestQueue = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<Request>  analyticsResponseQueue = new ConcurrentLinkedQueue<>();
+        OrderBookDistributor orderBookDistributor = new OrderBookDistributor(distributorInboundQueue, analyticsRequestQueue, queues, requestQueues, responseQueues, analyticsResponseQueue, messagePool);
 
 
         OrderBookProcessor btcOfferProcessor = new OfferOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(0), requestQueues.get(0), responseQueues.get(0)) ;

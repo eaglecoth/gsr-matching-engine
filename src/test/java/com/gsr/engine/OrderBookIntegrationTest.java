@@ -21,11 +21,15 @@ public class OrderBookIntegrationTest {
     private OrderBookProcessor solOfferProcessor;
     private OrderBookProcessor solBidProcessor;
     private ConcurrentLinkedQueue<Message> distributorInboundQueue;
+    ConcurrentLinkedQueue<Request> analyticsResponseQueue;
+    ConcurrentLinkedQueue<Request> incomingAnalyticsRequests;
 
     @Before
     public void setup(){
         ObjectPool<Message> messagePool = new ObjectPool<>(Message::new);
         distributorInboundQueue = new ConcurrentLinkedQueue<>();
+        analyticsResponseQueue = new ConcurrentLinkedQueue<>();
+        incomingAnalyticsRequests = new ConcurrentLinkedQueue<>();
 
         List<ConcurrentLinkedQueue<Message>> queues = new ArrayList<>(6);
         for (int i = 0; i < 6; i++) {
@@ -42,6 +46,7 @@ public class OrderBookIntegrationTest {
             queues.add(new ConcurrentLinkedQueue<>());
         }
 
+        orderBookDistributor = new OrderBookDistributor(distributorInboundQueue, incomingAnalyticsRequests, queues, requestQueues, responseQueues, analyticsResponseQueue, messagePool);
         btcOfferProcessor = new OfferOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(0), requestQueues.get(0), responseQueues.get(0)) ;
         btcBidProcessor = new BidOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(1), requestQueues.get(1), responseQueues.get(1));
         ethBidProcessor = new BidOrderBookProcessor(CcyPair.ETHUSD,   messagePool, queues.get(2), requestQueues.get(2), responseQueues.get(2));
@@ -67,6 +72,8 @@ public class OrderBookIntegrationTest {
 
     @Test
     public void testSingleLimitVsMarketBid() throws InterruptedException {
+
+
 
 
     }
