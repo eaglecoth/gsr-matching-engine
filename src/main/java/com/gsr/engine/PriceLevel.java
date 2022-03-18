@@ -54,7 +54,7 @@ public class PriceLevel {
     /**
      * If the quantity of the price is 0, the level does no longer serve any purpose and should be removed
      * from book
-     * @return true if this limit was the last in the book
+     * @return true if this price was the last in the book
      */
     public boolean removePriceFromBook(){
         if(nextHigher != null && nextLower != null){
