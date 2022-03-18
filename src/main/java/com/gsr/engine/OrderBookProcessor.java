@@ -16,9 +16,9 @@ public abstract class OrderBookProcessor {
     private Thread engineThread;
     private final CcyPair pair;
 
-    private final int MAX_PENDING_MD_UPDATES = 10;
+    private final int MAX_PENDING_MD_UPDATES = 100;
     private final int MAX_PENDING_ANALYTICS_REQ = 100;
-    private final int MAX_WAIT_NANOS = 20000;
+    private final int MAX_WAIT_NANOS = 2000000000;
 
     protected volatile boolean runningFlag;
     protected final TreeMap<Long, PriceLevel> orderBook = new TreeMap<>();
@@ -56,13 +56,13 @@ public abstract class OrderBookProcessor {
                 if (levelToRemove != null && levelToRemove.removePriceFromBook()) {
                     topOfBook.set(null);
                 }
+                System.out.println("Removed from book: [" + message.getPair() + "] side: [" + message.getSide() + "] price: [" + message.getPrice() +"]");
                 messageObjectPool.returnObject(message);
                 return;
 
             case AddOrUpdatePriceLevel:
-                if (!priceCrossingSpread(message.getPrice())) {
                     addOrUpdatePriceLevel(message);
-                }
+                    System.out.println("Added to book: [" + message.getPair() + "] side: [" + message.getSide() + "] price: [" + message.getPrice() +"] Quantity: [" + message.getQuantity() + "]" );
                 messageObjectPool.returnObject(message);
         }
 
@@ -107,10 +107,6 @@ public abstract class OrderBookProcessor {
         return priceLevel;
     }
 
-    public CcyPair getPair() {
-        return pair;
-    }
-
     public void setCorrespondingBook(OrderBookProcessor offerProcessor) {
         this.correspondingProcessor = offerProcessor;
     }
@@ -131,8 +127,8 @@ public abstract class OrderBookProcessor {
         engineThread = new Thread(() -> {
             System.out.println("Order Book Processor on ccy: [" + pair + "] on side: [" + getSide() + "] started.");
 
-            long lastMdUpdate = System.nanoTime();
-            long lastService = System.nanoTime();
+            long lastMdUpdate = Long.MAX_VALUE;
+            long lastService = Long.MAX_VALUE;
 
             while (runningFlag) {
 
@@ -146,12 +142,19 @@ public abstract class OrderBookProcessor {
 
                 boolean hasUpdatedBook = false;
 
-                Message marketDataMessage = inboundMdQueue.poll();
-                while (marketDataMessage != null && inboundRequestQueue.size() < MAX_PENDING_ANALYTICS_REQ && hasTimeToExecute(lastService, inboundRequestQueue.isEmpty())) {
-                    processMessage(marketDataMessage);
-                    marketDataMessage = inboundMdQueue.poll();
-                    hasUpdatedBook = true;
-                    lastMdUpdate = System.nanoTime();
+
+                while (inboundRequestQueue.size() < MAX_PENDING_ANALYTICS_REQ && hasTimeToExecute(lastService, inboundRequestQueue.isEmpty())) {
+
+                    Message marketDataMessage = inboundMdQueue.poll();
+
+                    if(marketDataMessage != null) {
+                        processMessage(marketDataMessage);
+                        hasUpdatedBook = true;
+                        lastMdUpdate = System.nanoTime();
+                    }else{
+                        break;
+                    }
+
 
                 }
 
@@ -160,29 +163,34 @@ public abstract class OrderBookProcessor {
                     clearCalculationResults();
                 }
 
-                Request request = inboundRequestQueue.poll();
+                while (inboundMdQueue.size() < MAX_PENDING_MD_UPDATES && hasTimeToExecute(lastMdUpdate, inboundMdQueue.isEmpty())) {
 
-                while (request != null && inboundMdQueue.size() < MAX_PENDING_MD_UPDATES && hasTimeToExecute(lastMdUpdate, inboundMdQueue.isEmpty())) {
-                    switch (request.getType()) {
+                    Request request = inboundRequestQueue.poll();
 
-                        case Vwap:
-                            request.populateResult(vwapCalculations.computeIfAbsent(request.getLevels(), this::calculateVwapOverLevels));
-                            break;
+                    if(request != null) {
+                        switch (request.getType()) {
 
-                        case AveragePrice:
-                            request.populateResult(priceCalculations.computeIfAbsent(request.getLevels(), this::calculateAveragePrice));
-                            break;
+                            case Vwap:
+                                request.populateResult(vwapCalculations.computeIfAbsent(request.getLevels(), this::calculateVwapOverLevels));
+                                break;
 
-                        case AverageQuantity:
-                            request.populateResult(quantityCalculations.computeIfAbsent(request.getLevels(), this::calculateQtyOverLevels));
-                            break;
+                            case AveragePrice:
+                                request.populateResult(priceCalculations.computeIfAbsent(request.getLevels(), this::calculateAveragePrice));
+                                break;
+
+                            case AverageQuantity:
+                                request.populateResult(quantityCalculations.computeIfAbsent(request.getLevels(), this::calculateQtyOverLevels));
+                                break;
+                        }
+                        outboundQueue.add(request);
+                        request = inboundRequestQueue.poll();
+                        lastService = System.nanoTime();
+                    }else{
+                        break;
                     }
-                    outboundQueue.add(request);
-                    request = inboundRequestQueue.poll();
-                    lastService = System.nanoTime();
                 }
             }
-        });
+        }, "OrderBook-" + pair + "-" + getSide());
     }
 
     private boolean hasTimeToExecute(long lastService, boolean empty) {
@@ -212,8 +220,5 @@ public abstract class OrderBookProcessor {
 
     public abstract double calculateVwapOverLevels(int levels);
 
-    protected abstract long getTopOfBookPrice();
-
-    protected abstract boolean priceCrossingSpread(long price);
-
+    protected abstract double getTopOfBookPrice();
 }

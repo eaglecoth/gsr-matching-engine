@@ -5,7 +5,7 @@ import com.gsr.data.Message;
 import com.gsr.data.MessageType;
 import com.gsr.data.Side;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Queue;
 
 
 /**
@@ -13,14 +13,14 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class MessageSerializerImpl implements MessageSerializer {
 
-    private final ConcurrentLinkedQueue<Message> engineMessageQueue;
+    private final Queue<Message> engineMessageQueue;
     private final ObjectPool<Message> messageObjectPool;
     private final String stringDelimiter;
     private final String valueDelimiter;
     private long offerRetryCount;
     private long sleepTimeMillis;
 
-    public MessageSerializerImpl(ConcurrentLinkedQueue<Message> messageQueue, ObjectPool objectPool, long retryCount, long waitTimeMillis, String delimiter, String keyValueDelimiter) {
+    public MessageSerializerImpl(Queue<Message> messageQueue, ObjectPool objectPool, long retryCount, long waitTimeMillis, String delimiter, String keyValueDelimiter) {
 
         engineMessageQueue = messageQueue;
         messageObjectPool = objectPool;
@@ -38,10 +38,10 @@ public class MessageSerializerImpl implements MessageSerializer {
     public boolean onMessage(String messageString) {
 
         Message message = deserialize(messageString);
-        System.out.println("Parsed message: " + message);
         if (message == null) {
             return false;
         }
+        System.out.println("Parsed message: " + message);
 
         if (!engineMessageQueue.offer(message)) {
             long currentRetryCount = offerRetryCount;
@@ -63,6 +63,12 @@ public class MessageSerializerImpl implements MessageSerializer {
 
 
     private Message deserialize(String msgToDeSerialize) {
+
+        if(msgToDeSerialize.charAt(0) == '#'){
+            System.out.println("Comment ignored: ");
+            return null;
+        }
+
 
         String[] messageString = msgToDeSerialize.split(stringDelimiter);
         Message message = messageObjectPool.acquireObject();
@@ -93,7 +99,6 @@ public class MessageSerializerImpl implements MessageSerializer {
                 case 's':
                     message.setSide(messageString[ptr].split(valueDelimiter)[1].equals("b") ? Side.Bid : Side.Offer);
                     break;
-
                 default:
                     System.out.println("I don't understand this field " + messageString[ptr].charAt(0) + ". I will ignore it");
             }

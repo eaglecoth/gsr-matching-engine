@@ -36,15 +36,15 @@ public class Request {
     }
 
     public void populateResult(long value){
-        requestResult.compareAndSet(null, (double) value);
+        requestResult.set((double) value);
     }
 
-    public boolean populateResult(double value){
-       return requestResult.compareAndSet(null, value);
+    public void populateResult(double value){
+        requestResult.set( value);
     }
 
     public double getResult(){
-        return requestResult.getAndSet(null);
+        return requestResult.get();
     }
 
     public Side getSide() {

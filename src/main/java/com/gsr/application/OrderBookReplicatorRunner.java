@@ -11,6 +11,7 @@ import com.gsr.feed.MessageSerializerImpl;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 
 import static com.gsr.data.Constants.*;
@@ -40,12 +41,12 @@ public class OrderBookReplicatorRunner {
 
         ObjectPool<Message> messagePool = new ObjectPool<>(Message::new);
 
-        ConcurrentLinkedQueue<Message> distributorInboundQueue = new ConcurrentLinkedQueue<>();
+        LinkedBlockingQueue<Message> distributorInboundQueue = new LinkedBlockingQueue<>();
         MessageSerializer serializer = new MessageSerializerImpl(distributorInboundQueue, messagePool, 3, 100, MESSAGE_DELIMITER, KEY_VALUE_DELIMITER);
 
-        ConcurrentLinkedQueue<Request> analyticsRequestQueue = new ConcurrentLinkedQueue<>();
-        ConcurrentLinkedQueue<Request>  analyticsResponseQueue = new ConcurrentLinkedQueue<>();
-        OrderBookDistributor orderBookDistributor = new OrderBookDistributor(distributorInboundQueue, analyticsRequestQueue, queues, requestQueues, responseQueues, analyticsResponseQueue, messagePool);
+        LinkedBlockingQueue<Request> analyticsRequestQueue = new LinkedBlockingQueue<>();
+        LinkedBlockingQueue<Request>  analyticsResponseQueue = new LinkedBlockingQueue<>();
+        OrderBookDistributor orderBookDistributor = new OrderBookDistributor(distributorInboundQueue, analyticsRequestQueue, queues, requestQueues, responseQueues, analyticsResponseQueue);
 
 
         OrderBookProcessor btcOfferProcessor = new OfferOrderBookProcessor(CcyPair.BTCUSD,   messagePool, queues.get(0), requestQueues.get(0), responseQueues.get(0)) ;

@@ -47,43 +47,60 @@ public class OfferOrderBookProcessor extends OrderBookProcessor{
         this.correspondingProcessor = bidProcessor;
     }
 
-
-    @Override
-    protected boolean priceCrossingSpread(long price) {
-        return price <= correspondingProcessor.getTopOfBookPrice();
-    }
-
     @Override
     protected Side getSide() {
         return Side.Offer;
     }
 
     @Override
-    protected long getTopOfBookPrice() {
-        return topOfBook == null ? Long.MAX_VALUE : topOfBook.get().getPrice();
+    protected double getTopOfBookPrice() {
+        return topOfBook.get() == null ? 0 : (double) topOfBook.get().getPrice() / 100;
     }
 
     @Override
     public double calculateAveragePrice(int levels) {
         int ptr = 0;
         PriceLevel currLevel = topOfBook.get();
+
+        if(currLevel == null){
+            return 0;
+        }
+
         long totalPrice= 0;
-        while(ptr < levels && currLevel != null){
+        while(ptr <= levels && currLevel != null){
             totalPrice += currLevel.getPrice();
             ptr +=1;
             currLevel = currLevel.getNextHigher();
         }
 
-        return (double) totalPrice / (levels * 100);
+        return (double) totalPrice / (ptr * 100);
     }
 
     @Override
     public long calculateQtyOverLevels(int levels) {
-        return 0;
+        int ptr = 0;
+        PriceLevel currLevel = topOfBook.get();
+        long totalQty= 0;
+        while(ptr < levels && currLevel != null){
+            totalQty += currLevel.getQuantity();
+            ptr +=1;
+            currLevel = currLevel.getNextHigher();
+        }
+
+        return totalQty;
     }
 
     @Override
     public double calculateVwapOverLevels(int levels) {
-        return 0;
+        int ptr = 0;
+        PriceLevel currLevel = topOfBook.get();
+        double totalPriceWeight= 0;
+        while(ptr < levels && currLevel != null){
+            totalPriceWeight += (currLevel.getPrice() * currLevel.getQuantity());
+            ptr +=1;
+            currLevel = currLevel.getNextHigher();
+        }
+
+        return  totalPriceWeight / (calculateQtyOverLevels(levels) *100);
     }
 }

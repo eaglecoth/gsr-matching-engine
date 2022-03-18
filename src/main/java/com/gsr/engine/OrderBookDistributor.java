@@ -4,10 +4,11 @@ import com.gsr.analytics.Request;
 import com.gsr.data.CcyPair;
 import com.gsr.data.Message;
 import com.gsr.data.Side;
-import com.gsr.feed.ObjectPool;
+
 
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 /**
  * Class responsible for unpacking instructions and sending them for processing to the correct threads.
@@ -17,28 +18,24 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class OrderBookDistributor {
 
 
-    private final Map<CcyPair,Map<Side,ConcurrentLinkedQueue<Request>>> requestResponseQueues = new HashMap<>();
-    private final Map<CcyPair,Map<Side,ConcurrentLinkedQueue<Request>>>   outboundRequestQueues = new HashMap<>();
-    private final Map<CcyPair,Map<Side,ConcurrentLinkedQueue<Message>>>   outboundMdQueues = new HashMap<>();
+    private final Map<CcyPair,Map<Side,Queue<Request>>> requestResponseQueues = new HashMap<>();
+    private final Map<CcyPair,Map<Side,Queue<Request>>>   outboundRequestQueues = new HashMap<>();
+    private final Map<CcyPair,Map<Side,Queue<Message>>>   outboundMdQueues = new HashMap<>();
 
-    private final ConcurrentLinkedQueue<Request> incomingAnalyticsRequestQueue;
-    private final ConcurrentLinkedQueue<Message> incomingMarketDataQueue;
-    private final ConcurrentLinkedQueue<Request> analyticsResponseQueue;
+    private final LinkedBlockingQueue<Request> incomingAnalyticsRequestQueue;
+    private final LinkedBlockingQueue<Message> incomingMarketDataQueue;
+    private final Queue<Request> analyticsResponseQueue;
 
     private volatile boolean runningFlag = true;
 
-    private final ObjectPool<Message> messagePool;
-
-    public OrderBookDistributor(ConcurrentLinkedQueue<Message> incomingMarketDataQueue,
-                                ConcurrentLinkedQueue<Request> incomingAnalyticsRequests,
+    public OrderBookDistributor(LinkedBlockingQueue<Message> incomingMarketDataQueue,
+                                LinkedBlockingQueue<Request> incomingAnalyticsRequests,
                                 List<ConcurrentLinkedQueue<Message>> engineQueues,
                                 List<ConcurrentLinkedQueue<Request>> requestQueues,
                                 List<ConcurrentLinkedQueue<Request>> responseQueues,
-                                ConcurrentLinkedQueue<Request> analyticsResponseQueue,
-                                ObjectPool<Message> messagePool) {
+                                Queue<Request> responseQueue) {
 
-        this.messagePool = messagePool;
-        this.analyticsResponseQueue = analyticsResponseQueue;
+        this.analyticsResponseQueue = responseQueue;
 
         this.incomingMarketDataQueue = incomingMarketDataQueue;
         this.incomingAnalyticsRequestQueue = incomingAnalyticsRequests;
@@ -46,6 +43,7 @@ public class OrderBookDistributor {
         Arrays.stream(CcyPair.values()).forEach(p -> {
             outboundRequestQueues.put(p, new HashMap<>());
             outboundMdQueues.put(p, new HashMap<>());
+            requestResponseQueues.put(p, new HashMap<>());
         });
 
         outboundMdQueues.get(CcyPair.BTCUSD).put(Side.Offer,engineQueues.get(0));
@@ -85,7 +83,12 @@ public class OrderBookDistributor {
             System.out.println("Analytics Request Distributor Running");
 
             while (runningFlag) {
-                Request request = incomingAnalyticsRequestQueue.poll();
+                Request request = null;
+                try {
+                    request = incomingAnalyticsRequestQueue.take();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
                 if (request != null) {
                     outboundRequestQueues.get(request.getPair()).get(request.getSide()).add(request);
                 }
@@ -97,8 +100,8 @@ public class OrderBookDistributor {
             System.out.println("Analytics Response Collector Running");
 
             while (runningFlag) {
-                for(Map<Side, ConcurrentLinkedQueue<Request>> map : requestResponseQueues.values()) {
-                    for (ConcurrentLinkedQueue<Request> list : map.values()) {
+                for(Map<Side,Queue<Request>> map : requestResponseQueues.values()) {
+                    for (Queue<Request> list : map.values()) {
                         Request request = list.poll();
                         if (request != null) {
                             analyticsResponseQueue.add(request);

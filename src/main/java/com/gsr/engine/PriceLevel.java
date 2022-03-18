@@ -15,7 +15,7 @@ public class PriceLevel {
 
     public void populate(Long price, long initialQuantity) {
 
-        this.price = initialQuantity;
+        this.price = price;
         this.quantity = initialQuantity;
     }
 

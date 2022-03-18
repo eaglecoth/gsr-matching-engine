@@ -68,7 +68,7 @@ public class Message {
                 ", pair=" + pair +
                 ", side=" + side +
                 ", quantity=" + quantity +
-                ", price=" + price +
+                ", price=" + (double) (price / 100) +
                 '}';
     }
 

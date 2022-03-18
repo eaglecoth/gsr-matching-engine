@@ -17,11 +17,6 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
     }
 
     @Override
-    protected boolean priceCrossingSpread(long price) {
-        return price >= correspondingProcessor.getTopOfBookPrice();
-    }
-
-    @Override
     protected Side getSide() {
         return Side.Bid;
     }
@@ -30,6 +25,11 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
     public double calculateAveragePrice(int levels) {
         int ptr = 0;
         PriceLevel currLevel = topOfBook.get();
+
+        if(currLevel == null){
+            return 0;
+        }
+
         long totalPrice= 0;
         while(ptr < levels && currLevel != null){
             totalPrice += currLevel.getPrice();
@@ -37,7 +37,7 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
             currLevel = currLevel.getNextLower();
         }
 
-        return (double) totalPrice / (levels * 100);
+        return (double) totalPrice / (ptr * 100);
     }
 
     @Override
@@ -65,12 +65,12 @@ public class BidOrderBookProcessor extends OrderBookProcessor{
             currLevel = currLevel.getNextLower();
         }
 
-        return  totalPriceWeight / calculateQtyOverLevels(levels);
+        return  totalPriceWeight / (calculateQtyOverLevels(levels) *100);
     }
 
     @Override
-    protected long getTopOfBookPrice() {
-        return topOfBook == null ? 0 : topOfBook.get().getPrice();
+    protected double getTopOfBookPrice() {
+        return topOfBook.get() == null ? 0 : (double)topOfBook.get().getPrice() / 100;
     }
 
 
